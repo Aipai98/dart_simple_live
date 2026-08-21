@@ -1464,7 +1464,7 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
       onPlayerWindowModeExited();
       return;
     }
-    if (!Platform.isAndroid) {
+    if (!Platform.isAndroid && !Platform.isIOS) {
       fullScreenState.value = false;
     }
     onPlayerWindowModeExited();
@@ -2268,7 +2268,7 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
       }
       return;
     }
-    if (!Platform.isAndroid) {
+    if (!Platform.isAndroid && !Platform.isIOS) {
       SmartDialog.showToast("当前平台暂不支持小窗播放");
       return;
     }

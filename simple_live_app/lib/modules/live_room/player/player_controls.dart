@@ -409,7 +409,7 @@ Widget _buildFullTopBar(
                     size: 24,
                   ),
                 ),
-              if (Platform.isAndroid || Utils.isOhos)
+              if (Platform.isAndroid || Platform.isIOS || Utils.isOhos)
                 IconButton(
                   onPressed: controller.enablePIP,
                   icon: const Icon(
