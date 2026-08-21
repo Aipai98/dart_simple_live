@@ -62,4 +62,4 @@ jobs:
           retention-days: 7
 
       - name: Done
-        run: echo "Build completed: ${{ job.status }}"
+        run: echo 'Build completed: ${{ job.status }}'
