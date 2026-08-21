@@ -9,7 +9,7 @@ dependencies:
   simple_live_core:
     path: ../simple_live_core
   dart_quickjs:
-    path: ../third_party/dart_quickjs_compat
+    path: third_party/dart_quickjs_compat
   # 图标
   cupertino_icons: ^1.0.8
   remixicon: ^1.4.1 #Remix图标
@@ -117,9 +117,9 @@ dependency_overrides:
   # app 侧统一覆盖为本地 compat（鸿蒙 OHOS 3.22 工具链不能消费
   # git 源的 Dart 3.10 Native Assets），避免"同一包双源"冲突。
   dart_quickjs:
-    path: ../third_party/dart_quickjs_compat
+    path: third_party/dart_quickjs_compat
   canvas_danmaku:
-    path: ../third_party/canvas_danmaku
+    path: third_party/canvas_danmaku
   # 本地 fork：原包缺 androidx.core 依赖，Android 构建 toUri 无法解析。
   screen_brightness_android:
     path: third_party/screen_brightness_android
