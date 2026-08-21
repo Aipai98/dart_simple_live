@@ -1,0 +1,70 @@
+name: Build iOS IPA (搜索+分类增强版)
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: '分支名称'
+        required: true
+        default: 'master'
+        type: string
+  push:
+    branches:
+      - 'merge-search-yan'
+
+env:
+  FLUTTER_VERSION: "3.41.x"
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+
+    steps:
+      # 签出代码
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch || github.ref }}
+          fetch-depth: 1
+
+      # 设置Flutter
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      # 更新packages
+      - name: Restore packages
+        run: |
+          cd simple_live_app
+          flutter pub get
+
+      # 打包iOS（无签名）
+      - name: Build iOS
+        run: |
+          cd simple_live_app
+          flutter build ios --release --no-codesign
+
+      # 创建未签名ipa
+      - name: Create unsigned IPA
+        run: |
+          cd simple_live_app
+          mkdir -p build/ios/iphoneos/Payload
+          cp -R build/ios/iphoneos/Runner.app build/ios/iphoneos/Payload/Runner.app
+          cd build/ios/iphoneos/
+          zip -q -r ios_search_enhanced.ipa Payload
+          cd ../../..
+
+      # 上传IPA至Artifacts
+      - name: Upload IPA to Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-ipa-search-enhanced
+          path: |
+            simple_live_app/build/ios/iphoneos/ios_search_enhanced.ipa
+          retention-days: 7
+
+      # 完成
+      - run: echo "iOS IPA 构建完成，状态: ${{ job.status }}"

@@ -1,0 +1,1799 @@
+import 'dart:convert';
+import 'dart:math';
+
+import 'package:simple_live_core/simple_live_core.dart';
+import 'package:simple_live_core/src/common/convert_helper.dart';
+import 'package:simple_live_core/src/common/core_cancellation.dart';
+import 'package:simple_live_core/src/common/core_error.dart';
+import 'package:simple_live_core/src/common/core_log.dart';
+import 'package:simple_live_core/src/common/http_client.dart';
+import 'package:simple_live_core/src/danmaku/douyin_danmaku.dart';
+import 'package:simple_live_core/src/douyin_partition_images.dart';
+import 'package:simple_live_core/src/scripts/douyin_sign.dart';
+
+typedef DouyinAbogusSigner = String Function(String url, String userAgent);
+
+enum DouyinSearchAuthFailureReason {
+  missingCookie,
+  onlyTtwid,
+  incompleteCookie,
+  expired,
+  rejected,
+}
+
+class DouyinSearchAuthError extends CoreError {
+  DouyinSearchAuthError(this.reason)
+      : super(
+          _messageFor(reason),
+          kind: CoreErrorKind.search,
+        );
+
+  final DouyinSearchAuthFailureReason reason;
+
+  static const int platformStatusCode = 2483;
+
+  static String _messageFor(DouyinSearchAuthFailureReason reason) {
+    switch (reason) {
+      case DouyinSearchAuthFailureReason.missingCookie:
+        return "未配置抖音 Cookie，请前往账号管理配置完整登录 Cookie";
+      case DouyinSearchAuthFailureReason.onlyTtwid:
+        return "当前仅配置了 ttwid，房间或主播搜索需要完整登录 Cookie";
+      case DouyinSearchAuthFailureReason.incompleteCookie:
+        return "当前抖音 Cookie 未检测到完整登录态，请重新获取完整 Cookie";
+      case DouyinSearchAuthFailureReason.expired:
+        return "抖音 Cookie 已过期，请重新获取";
+      case DouyinSearchAuthFailureReason.rejected:
+        return "已配置 Cookie，但抖音仍拒绝搜索；可能是 Cookie 失效或触发风控，请稍后重试或重新获取 Cookie";
+    }
+  }
+}
+
+class DouyinSite implements LiveSite {
+  DouyinSite({DouyinAbogusSigner? abogusSigner})
+      : _abogusSigner = abogusSigner ?? DouyinSign.getAbogusUrl;
+
+  final DouyinAbogusSigner _abogusSigner;
+
+  @override
+  Future<LiveStatusState> getLiveStatusState({required String roomId}) async {
+    return await getLiveStatus(roomId: roomId)
+        ? LiveStatusState.live
+        : LiveStatusState.offline;
+  }
+
+  @override
+  String id = "douyin";
+
+  @override
+  String name = "抖音直播";
+
+  @override
+  LiveDanmaku getDanmaku() => DouyinDanmaku();
+
+  /// 使用 QQBrowser User-Agent（参考 DouyinLiveRecorder）
+  static const String kDefaultUserAgent =
+      "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.5845.97 Safari/537.36 Core/1.116.567.400 QQBrowser/19.7.6764.400";
+
+  /// Keep the search fingerprint internally consistent. Search used to sign
+  /// with QQBrowser/Chrome 116 while declaring Edge 125 in both the query and
+  /// client-hint headers, which is a strong anti-bot signal.
+  static const String kSearchUserAgent =
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+      "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.0";
+
+  static const String kDefaultReferer = "https://live.douyin.com";
+
+  static const String kDefaultAuthority = "live.douyin.com";
+  static const Duration _webCookieCacheTtl = Duration(minutes: 5);
+  static final Map<String, String> _webCookieCache = <String, String>{};
+  static final Map<String, DateTime> _webCookieCacheAt = <String, DateTime>{};
+  late final String _fallbackSearchWebId = _generateSearchWebId();
+
+  /// 默认 Cookie - 只需要 ttwid 字段即可获取所有画质（包括蓝光）
+  /// 经过测试验证，LOGIN_STATUS=1 等其他字段都是可选的
+  static const String kDefaultCookie =
+      "ttwid=1%7CB1qls3GdnZhUov9o2NxOMxxYS2ff6OSvEWbv0ytbES4%7C1680522049%7C280d802d6d478e3e78d0c807f7c487e7ffec0ae4e5fdd6a0fe74c3c6af149511";
+
+  /// 用户设置的 cookie
+  String cookie = "";
+
+  void _logDebug(String msg) {
+    // 同时使用 print 和 CoreLog 确保日志输出
+    print("[Douyin] $msg");
+    CoreLog.d("[Douyin] $msg");
+  }
+
+  void _logElapsed(String label, Stopwatch stopwatch) {
+    stopwatch.stop();
+    _logDebug("$label 耗时 ${stopwatch.elapsedMilliseconds}ms");
+  }
+
+  void _throwIfCancelled(CoreCancellation? cancellation) {
+    if (cancellation?.isCancelled ?? false) {
+      throw CoreCancelledError();
+    }
+  }
+
+  Map<String, dynamic> headers = {
+    "Authority": kDefaultAuthority,
+    "Referer": kDefaultReferer,
+    "User-Agent": kDefaultUserAgent,
+  };
+
+  Future<Map<String, dynamic>> getRequestHeaders() async {
+    try {
+      // 如果用户已设置 cookie，直接使用用户的 cookie
+      if (cookie.isNotEmpty) {
+        headers["cookie"] = DouyinCookieHelper.normalizeInput(cookie);
+        return headers;
+      }
+
+      // 使用默认的 ttwid cookie（只需要 ttwid 即可获取所有画质）
+      headers["cookie"] = kDefaultCookie;
+      return headers;
+    } catch (e) {
+      if (e is CoreCancelledError) {
+        rethrow;
+      }
+      CoreLog.error(e);
+      if (!(headers["cookie"]?.toString().isNotEmpty ?? false)) {
+        headers["cookie"] = kDefaultCookie;
+      }
+      return headers;
+    }
+  }
+
+  Future<String> _getDanmakuCookie(
+    String webRid, {
+    CoreCancellation? cancellation,
+  }) async {
+    _throwIfCancelled(cancellation);
+    final stopwatch = Stopwatch()..start();
+    final requestHeaders = await getRequestHeaders();
+    _throwIfCancelled(cancellation);
+    final baseCookie = requestHeaders["cookie"]?.toString() ?? "";
+    try {
+      final webCookie = await _getWebCookie(
+        webRid,
+        cancellation: cancellation,
+      ).timeout(const Duration(seconds: 5));
+      _throwIfCancelled(cancellation);
+      final merged = _mergeCookieValues(
+        baseCookie,
+        webCookie,
+        preferBase: cookie.isNotEmpty,
+      );
+      _logElapsed("_getDanmakuCookie($webRid)", stopwatch);
+      return merged;
+    } catch (e) {
+      if (e is CoreCancelledError) {
+        rethrow;
+      }
+      CoreLog.error(e);
+      _logElapsed("_getDanmakuCookie($webRid) fallback", stopwatch);
+      return baseCookie;
+    }
+  }
+
+  String _mergeCookieValues(
+    String baseCookie,
+    String extraCookie, {
+    bool preferBase = false,
+  }) {
+    final base = _parseCookieValue(baseCookie);
+    final extra = _parseCookieValue(extraCookie);
+    final merged = preferBase ? {...extra, ...base} : {...base, ...extra};
+    return merged.entries
+        .map((entry) => "${entry.key}=${entry.value}")
+        .join("; ");
+  }
+
+  Map<String, String> _parseCookieValue(String cookieValue) {
+    final cookieMap = <String, String>{};
+    for (final part in cookieValue.split(";")) {
+      final item = part.trim();
+      if (item.isEmpty) {
+        continue;
+      }
+      final separatorIndex = item.indexOf("=");
+      if (separatorIndex <= 0) {
+        continue;
+      }
+      final rawKey = item.substring(0, separatorIndex).trim();
+      final lowerKey = rawKey.toLowerCase();
+      final key =
+          lowerKey == "ttwid" || lowerKey == "__ac_nonce" ? lowerKey : rawKey;
+      final value = item.substring(separatorIndex + 1).trim();
+      if (key.isNotEmpty) {
+        cookieMap[key] = value;
+      }
+    }
+    return cookieMap;
+  }
+
+  @override
+  Future<List<LiveCategory>> getCategores() async {
+    List<LiveCategory> categories = [];
+    var result = await HttpClient.instance.getText(
+      "https://live.douyin.com/",
+      queryParameters: {},
+      header: await getRequestHeaders(),
+    );
+
+    final renderDataJson = _extractCategoryRenderData(result);
+    final categoryData = (renderDataJson["categoryData"] as List?) ?? const [];
+
+    for (var item in categoryData) {
+      List<LiveSubCategory> subs = [];
+      var id = '${item["partition"]["id_str"]},${item["partition"]["type"]}';
+      for (var subItem in item["sub_partition"]) {
+        var subCategory = LiveSubCategory(
+          id: '${subItem["partition"]["id_str"]},${subItem["partition"]["type"]}',
+          name: asT<String?>(subItem["partition"]["title"]) ?? "",
+          parentId: id,
+          pic: _pickPartitionImageUrl(subItem["partition"]) ??
+              _pickPartitionImageUrl(item["partition"]) ??
+              _partitionImageFallback(
+                '${subItem["partition"]["id_str"]}',
+              ) ??
+              _partitionImageFallback('${item["partition"]["id_str"]}'),
+        );
+        subs.add(subCategory);
+      }
+
+      var category = LiveCategory(
+        children: subs,
+        id: id,
+        name: asT<String?>(item["partition"]["title"]) ?? "",
+      );
+      subs.insert(
+        0,
+        LiveSubCategory(
+          id: category.id,
+          name: category.name,
+          parentId: category.id,
+          pic: _pickPartitionImageUrl(item["partition"]) ??
+              _partitionImageFallback('${item["partition"]["id_str"]}'),
+        ),
+      );
+      categories.add(category);
+    }
+    return categories;
+  }
+
+  /// 抖音分区无官方图片，用 [douyinPartitionImages] 静态映射兜底
+  String? _partitionImageFallback(String partitionIdStr) =>
+      douyinPartitionImages[partitionIdStr];
+
+  String? _pickPartitionImageUrl(dynamic data) {
+    if (data == null) return null;
+    if (data is String) {
+      final value = data.trim();
+      return isHttpImageUrl(value) ? value : null;
+    }
+    if (data is List) {
+      for (final item in data) {
+        final value = _pickPartitionImageUrl(item);
+        if (value != null && value.isNotEmpty) return value;
+      }
+      return null;
+    }
+    if (data is! Map) return null;
+
+    for (final key in const [
+      "icon", "icons", "cover", "background", "avatar_thumb",
+      "image", "image_url", "url", "url_list", "static_icon",
+    ]) {
+      final value = _pickPartitionImageUrl(data[key]);
+      if (value != null && value.isNotEmpty) return value;
+    }
+
+    for (final value in data.values) {
+      final resolved = _pickPartitionImageUrl(value);
+      if (resolved != null && resolved.isNotEmpty) return resolved;
+    }
+    return null;
+  }
+
+  Map<String, String?> _resolveDouyinCategoryInfo(dynamic roomData) {
+    final room = roomData is Map ? roomData : <String, dynamic>{};
+    final partitionRoadMap =
+        room["partition_road_map"] ?? room["partitionRoadMap"];
+    final partition = room["partition"] ??
+        room["room_partition"] ??
+        room["partitionInfo"] ??
+        (partitionRoadMap is List && partitionRoadMap.isNotEmpty
+            ? partitionRoadMap.last
+            : null);
+    final parentPartition = room["parent_partition"] ??
+        room["partition_parent"] ??
+        (partition is Map
+            ? partition["parent_partition"] ??
+                partition["partition_parent"] ??
+                partition["parent"]
+            : null) ??
+        (partitionRoadMap is List && partitionRoadMap.length > 1
+            ? partitionRoadMap.first
+            : null) ??
+        room["partitionInfo"];
+
+    return {
+      "categoryId": _resolveCategoryValue(partition, const ["id_str", "id", "partition_id", "partition"]),
+      "categoryName": _resolveCategoryValue(partition, const ["title", "name", "partition_title"]),
+      "categoryParentId": _resolveCategoryValue(parentPartition, const ["id_str", "id", "partition_id", "partition"]),
+      "categoryParentName": _resolveCategoryValue(parentPartition, const ["title", "name", "partition_title"]),
+      "categoryPic": _pickPartitionImageUrl(partition) ?? _pickPartitionImageUrl(parentPartition),
+    };
+  }
+
+  String? _resolveCategoryValue(dynamic source, List<String> keys, {int depth = 0}) {
+    if (depth > 6) return null;
+    if (source is List) {
+      for (final item in source) {
+        final value = _resolveCategoryValue(item, keys, depth: depth + 1);
+        if (value != null && value.isNotEmpty) return value;
+      }
+      return null;
+    }
+    if (source is! Map) return null;
+    for (final key in keys) {
+      final value = source[key]?.toString().trim();
+      if (value != null && value.isNotEmpty) return value;
+    }
+    for (final value in source.values) {
+      final resolved = _resolveCategoryValue(value, keys, depth: depth + 1);
+      if (resolved != null && resolved.isNotEmpty) return resolved;
+    }
+    return null;
+  }
+
+  Map<String, dynamic> _extractCategoryRenderData(String html) {
+    const marker = r'\"categoryData\":';
+    final markerIndex = html.indexOf(marker);
+    if (markerIndex < 0) throw CoreError("抖音分类数据解析失败");
+    final arrayStart = html.indexOf("[", markerIndex);
+    if (arrayStart < 0) throw CoreError("抖音分类数据解析失败");
+    final escapedArray = _extractEscapedJsonArray(html, arrayStart);
+    final normalizedJson = '{"categoryData":$escapedArray}'
+        .replaceAll(r'\"', '"')
+        .replaceAll(r"\/", "/")
+        .replaceAll(r"\\", "\\");
+    return json.decode(normalizedJson) as Map<String, dynamic>;
+  }
+
+  String _extractEscapedJsonArray(String source, int startIndex) {
+    final buffer = StringBuffer();
+    var depth = 0;
+    var inString = false;
+    var escaped = false;
+    for (var i = startIndex; i < source.length; i++) {
+      final char = source[i];
+      buffer.write(char);
+      if (escaped) { escaped = false; continue; }
+      if (char == "\\") { escaped = true; continue; }
+      if (char == '"') { inString = !inString; continue; }
+      if (inString) continue;
+      if (char == "[") { depth += 1; }
+      else if (char == "]") { depth -= 1; if (depth == 0) return buffer.toString(); }
+    }
+    throw CoreError("抖音分类数据解析失败");
+  }
+
+  List _resolveCategoryRoomData(dynamic result) {
+    if (result is Map && result["status_code"] == 444) {
+      throw CoreError("", statusCode: 444);
+    }
+    if (result is! Map) throw CoreError("抖音分类接口返回异常");
+    final data = result["data"];
+    if (data is! Map) throw CoreError("抖音分类接口返回异常，可能已触发访问限制");
+    final rooms = data["data"];
+    if (rooms is! List) throw CoreError("抖音分类接口返回异常，可能已触发访问限制");
+    return rooms;
+  }
+
+  @override
+  Future<LiveCategoryResult> getCategoryRooms(
+    LiveSubCategory category, {
+    int page = 1,
+  }) async {
+    var ids = category.id.split(',');
+    var partitionId = ids[0];
+    var partitionType = ids[1];
+
+    String serverUrl =
+        "https://live.douyin.com/webcast/web/partition/detail/room/v2/";
+    var uri = Uri.parse(serverUrl).replace(
+      scheme: "https",
+      port: 443,
+      queryParameters: {
+        "aid": '6383',
+        "app_name": "douyin_web",
+        "live_id": '1',
+        "device_platform": "web",
+        "language": "zh-CN",
+        "enter_from": "link_share",
+        "cookie_enabled": "true",
+        "screen_width": "1980",
+        "screen_height": "1080",
+        "browser_language": "zh-CN",
+        "browser_platform": "Win32",
+        "browser_name": "Edge",
+        "browser_version": "125.0.0.0",
+        "browser_online": "true",
+        "count": '15',
+        "offset": ((page - 1) * 15).toString(),
+        "partition": partitionId,
+        "partition_type": partitionType,
+        "req_from": '2',
+      },
+    );
+    var requestUrl = DouyinSign.getAbogusUrl(uri.toString(), kDefaultUserAgent);
+
+    var result = await HttpClient.instance.getJson(
+      requestUrl,
+      header: await getRequestHeaders(),
+    );
+
+    final roomData = _resolveCategoryRoomData(result);
+    var hasMore = roomData.length >= 15;
+    var items = <LiveRoomItem>[];
+    for (var item in roomData) {
+      var roomItem = LiveRoomItem(
+        roomId: item["web_rid"],
+        title: item["room"]["title"].toString(),
+        cover: item["room"]["cover"]["url_list"][0].toString(),
+        userName: item["room"]["owner"]["nickname"].toString(),
+        online: int.tryParse(
+              item["room"]["room_view_stats"]["display_value"].toString(),
+            ) ??
+            0,
+      );
+      items.add(roomItem);
+    }
+    return LiveCategoryResult(hasMore: hasMore, items: items);
+  }
+
+  @override
+  Future<LiveCategoryResult> getRecommendRooms({int page = 1}) async {
+    String serverUrl =
+        "https://live.douyin.com/webcast/web/partition/detail/room/v2/";
+    var uri = Uri.parse(serverUrl).replace(
+      scheme: "https",
+      port: 443,
+      queryParameters: {
+        "aid": '6383',
+        "app_name": "douyin_web",
+        "live_id": '1',
+        "device_platform": "web",
+        "language": "zh-CN",
+        "enter_from": "link_share",
+        "cookie_enabled": "true",
+        "screen_width": "1980",
+        "screen_height": "1080",
+        "browser_language": "zh-CN",
+        "browser_platform": "Win32",
+        "browser_name": "Edge",
+        "browser_version": "125.0.0.0",
+        "browser_online": "true",
+        "count": '15',
+        "offset": ((page - 1) * 15).toString(),
+        "partition": '720',
+        "partition_type": '1',
+        "req_from": '2',
+      },
+    );
+    var requestUrl = DouyinSign.getAbogusUrl(uri.toString(), kDefaultUserAgent);
+
+    var result = await HttpClient.instance.getJson(
+      requestUrl,
+      header: await getRequestHeaders(),
+    );
+
+    final roomData = _resolveCategoryRoomData(result);
+    var hasMore = roomData.length >= 15;
+    var items = <LiveRoomItem>[];
+    for (var item in roomData) {
+      var roomItem = LiveRoomItem(
+        roomId: item["web_rid"],
+        title: item["room"]["title"].toString(),
+        cover: item["room"]["cover"]["url_list"][0].toString(),
+        userName: item["room"]["owner"]["nickname"].toString(),
+        online: int.tryParse(
+              item["room"]["room_view_stats"]["display_value"].toString(),
+            ) ??
+            0,
+      );
+      items.add(roomItem);
+    }
+    return LiveCategoryResult(hasMore: hasMore, items: items);
+  }
+
+  @override
+  Future<LiveRoomDetail> getRoomDetail({required String roomId}) async {
+    final stopwatch = Stopwatch()..start();
+    try {
+      if (roomId.length <= 16) {
+        var webRid = roomId;
+        return await getRoomDetailByWebRid(webRid);
+      }
+      return await getRoomDetailByRoomId(roomId);
+    } finally {
+      _logElapsed("getRoomDetail($roomId)", stopwatch);
+    }
+  }
+
+  /// 通过roomId获取直播间信息
+  Future<LiveRoomDetail> getRoomDetailByRoomId(String roomId) async {
+    final stopwatch = Stopwatch()..start();
+    var roomData = await _getRoomDataByRoomId(roomId);
+    final room = roomData["data"]?["room"];
+    if (room is! Map) {
+      throw CoreError("抖音直播间数据为空，可能是房间不存在、未开播或被风控限制");
+    }
+
+    var webRid = room["owner"]["web_rid"].toString();
+    var userUniqueId = generateRandomNumber(12).toString();
+    var owner = room["owner"];
+    final categoryInfo = _resolveDouyinCategoryInfo(room);
+
+    var status = asT<int?>(room["status"]) ?? 0;
+
+    if (status == 4) {
+      var result = await getRoomDetailByWebRid(webRid);
+      _logElapsed("getRoomDetailByRoomId($roomId) redirect", stopwatch);
+      return result;
+    }
+
+    var roomStatus = status == 2;
+    var danmakuCookie = await _getDanmakuCookie(webRid);
+
+    final detail = LiveRoomDetail(
+      roomId: webRid,
+      title: room["title"].toString(),
+      cover: roomStatus ? room["cover"]["url_list"][0].toString() : "",
+      userName: owner["nickname"].toString(),
+      userAvatar: owner["avatar_thumb"]["url_list"][0].toString(),
+      online: roomStatus
+          ? asT<int?>(room["room_view_stats"]["display_value"]) ?? 0
+          : 0,
+      status: roomStatus,
+      url: "https://live.douyin.com/$webRid",
+      introduction: owner["signature"].toString(),
+      notice: "",
+      categoryId: categoryInfo["categoryId"],
+      categoryName: categoryInfo["categoryName"],
+      categoryParentId: categoryInfo["categoryParentId"],
+      categoryParentName: categoryInfo["categoryParentName"],
+      categoryPic: categoryInfo["categoryPic"],
+      danmakuData: DouyinDanmakuArgs(
+        webRid: webRid,
+        roomId: roomId,
+        userId: userUniqueId,
+        cookie: danmakuCookie,
+      ),
+      data: room["stream_url"],
+    );
+    _logElapsed("getRoomDetailByRoomId($roomId)", stopwatch);
+    return detail;
+  }
+
+  /// 通过WebRid获取直播间信息
+  Future<LiveRoomDetail> getRoomDetailByWebRid(String webRid) async {
+    final stopwatch = Stopwatch()..start();
+    try {
+      var result = await _getRoomDetailByWebRidApi(webRid);
+      _logElapsed("getRoomDetailByWebRid($webRid) api", stopwatch);
+      return result;
+    } catch (e) {
+      if (e is CoreCancelledError) {
+        rethrow;
+      }
+      CoreLog.error(e);
+      if (e is CoreError && e.statusCode == 444) {
+        rethrow;
+      }
+    }
+    final result = await _getRoomDetailByWebRidHtml(webRid);
+    _logElapsed("getRoomDetailByWebRid($webRid) html", stopwatch);
+    return result;
+  }
+
+  /// 通过WebRid访问直播间API，从API中获取直播间信息
+  Future<LiveRoomDetail> _getRoomDetailByWebRidApi(String webRid) async {
+    final stopwatch = Stopwatch()..start();
+    var data = await _getRoomDataByApi(webRid);
+
+    var roomData = data["data"][0];
+    var userData = data["user"];
+    var roomId = roomData["id_str"].toString();
+    final categoryInfo = _resolveDouyinCategoryInfo(roomData);
+
+    var userUniqueId = generateRandomNumber(12).toString();
+    var owner = roomData["owner"];
+
+    var roomStatus = (asT<int?>(roomData["status"]) ?? 0) == 2;
+    var danmakuCookie = await _getDanmakuCookie(webRid);
+
+    final detail = LiveRoomDetail(
+      roomId: webRid,
+      title: roomData["title"].toString(),
+      cover: roomStatus ? roomData["cover"]["url_list"][0].toString() : "",
+      userName: roomStatus
+          ? owner["nickname"].toString()
+          : userData["nickname"].toString(),
+      userAvatar: roomStatus
+          ? owner["avatar_thumb"]["url_list"][0].toString()
+          : userData["avatar_thumb"]["url_list"][0].toString(),
+      online: roomStatus
+          ? asT<int?>(roomData["room_view_stats"]["display_value"]) ?? 0
+          : 0,
+      status: roomStatus,
+      url: "https://live.douyin.com/$webRid",
+      introduction: owner?["signature"]?.toString() ?? "",
+      notice: "",
+      categoryId: categoryInfo["categoryId"],
+      categoryName: categoryInfo["categoryName"],
+      categoryParentId: categoryInfo["categoryParentId"],
+      categoryParentName: categoryInfo["categoryParentName"],
+      categoryPic: categoryInfo["categoryPic"],
+      danmakuData: DouyinDanmakuArgs(
+        webRid: webRid,
+        roomId: roomId,
+        userId: userUniqueId,
+        cookie: danmakuCookie,
+      ),
+      data: roomStatus ? roomData["stream_url"] : {},
+    );
+    _logElapsed("_getRoomDetailByWebRidApi($webRid)", stopwatch);
+    return detail;
+  }
+
+  /// 通过WebRid访问直播间网页，从网页HTML中获取直播间信息
+  Future<LiveRoomDetail> _getRoomDetailByWebRidHtml(String webRid) async {
+    final stopwatch = Stopwatch()..start();
+    var roomData = await _getRoomDataByHtml(webRid);
+    var roomId = roomData["roomStore"]["roomInfo"]["room"]["id_str"].toString();
+    var userUniqueId = resolveUserUniqueIdFromRoomData(roomData);
+
+    var room = roomData["roomStore"]["roomInfo"]["room"];
+    var owner = room["owner"];
+    var anchor = roomData["roomStore"]["roomInfo"]["anchor"];
+    final categoryInfo = _resolveDouyinCategoryInfo(room);
+    var roomStatus = (asT<int?>(room["status"]) ?? 0) == 2;
+
+    var danmakuCookie = await _getDanmakuCookie(webRid);
+
+    final detail = LiveRoomDetail(
+      roomId: webRid,
+      title: room["title"].toString(),
+      cover: roomStatus ? room["cover"]["url_list"][0].toString() : "",
+      userName: roomStatus
+          ? owner["nickname"].toString()
+          : anchor["nickname"].toString(),
+      userAvatar: roomStatus
+          ? owner["avatar_thumb"]["url_list"][0].toString()
+          : anchor["avatar_thumb"]["url_list"][0].toString(),
+      online: roomStatus
+          ? asT<int?>(room["room_view_stats"]["display_value"]) ?? 0
+          : 0,
+      status: roomStatus,
+      url: "https://live.douyin.com/$webRid",
+      introduction: owner?["signature"]?.toString() ?? "",
+      notice: "",
+      categoryId: categoryInfo["categoryId"],
+      categoryName: categoryInfo["categoryName"],
+      categoryParentId: categoryInfo["categoryParentId"],
+      categoryParentName: categoryInfo["categoryParentName"],
+      categoryPic: categoryInfo["categoryPic"],
+      danmakuData: DouyinDanmakuArgs(
+        webRid: webRid,
+        roomId: roomId,
+        userId: userUniqueId,
+        cookie: danmakuCookie,
+      ),
+      data: roomStatus ? room["stream_url"] : {},
+    );
+    _logElapsed("_getRoomDetailByWebRidHtml($webRid)", stopwatch);
+    return detail;
+  }
+
+  String resolveUserUniqueIdFromRoomData(dynamic roomData) {
+    final resolved = _resolveNestedString(roomData, const [
+      "userStore", "odin", "user_unique_id",
+    ]);
+    if (resolved != null && resolved.isNotEmpty) return resolved;
+
+    final fallback = _resolveNestedString(roomData, const [
+      "userStore", "user", "user_unique_id",
+    ]);
+    if (fallback != null && fallback.isNotEmpty) return fallback;
+
+    return generateRandomNumber(12).toString();
+  }
+
+  String? _resolveNestedString(dynamic source, List<String> path) {
+    dynamic current = source;
+    for (final key in path) {
+      if (current is! Map) return null;
+      current = current[key];
+      if (current == null) return null;
+    }
+    final value = current.toString().trim();
+    return value.isEmpty ? null : value;
+  }
+
+  /// 进入直播间前需要先获取cookie
+  Future<String> _getWebCookie(
+    String webRid, {
+    CoreCancellation? cancellation,
+  }) async {
+    _throwIfCancelled(cancellation);
+    final requestHeaders = Map<String, dynamic>.from(await getRequestHeaders());
+    _throwIfCancelled(cancellation);
+    final baseCookie = _getCookieHeaderValue(requestHeaders);
+    final cacheKey = "$webRid|${baseCookie.hashCode}";
+    final cachedAt = _webCookieCacheAt[cacheKey];
+    final cachedValue = _webCookieCache[cacheKey];
+    if (cachedAt != null &&
+        cachedValue != null &&
+        DateTime.now().difference(cachedAt) < _webCookieCacheTtl) {
+      _logDebug("_getWebCookie($webRid) 使用缓存");
+      return cachedValue;
+    }
+    final stopwatch = Stopwatch()..start();
+    requestHeaders["Referer"] = "https://live.douyin.com/$webRid";
+    dynamic headResp;
+    try {
+      headResp = await HttpClient.instance.head(
+        "https://live.douyin.com/$webRid",
+        header: requestHeaders,
+        cancellation: cancellation,
+      );
+    } catch (e) {
+      if (e is CoreCancelledError) {
+        rethrow;
+      }
+      if (baseCookie.isNotEmpty) {
+        _logDebug("获取直播间 Web Cookie 的 HEAD 请求失败，使用已保存 Cookie 继续：$e");
+        _webCookieCache[cacheKey] = baseCookie;
+        _webCookieCacheAt[cacheKey] = DateTime.now();
+        _logElapsed("_getWebCookie($webRid) fallback", stopwatch);
+        return baseCookie;
+      }
+      rethrow;
+    }
+    _throwIfCancelled(cancellation);
+    if (headResp.statusCode == 444) {
+      throw CoreError("", statusCode: 444, kind: CoreErrorKind.http);
+    }
+    var dyCookie = "";
+    if (baseCookie.isNotEmpty) {
+      dyCookie = _ensureCookieEndsWithSemicolon(baseCookie);
+    }
+    headResp.headers["set-cookie"]?.forEach((element) {
+      var cookie = element.split(";").first;
+      if (cookie.contains("ttwid")) dyCookie += "$cookie;";
+      if (cookie.contains("__ac_nonce")) dyCookie += "$cookie;";
+      if (cookie.contains("msToken")) dyCookie += "$cookie;";
+    });
+    _webCookieCache[cacheKey] = dyCookie;
+    _webCookieCacheAt[cacheKey] = DateTime.now();
+    _logElapsed("_getWebCookie($webRid)", stopwatch);
+    return dyCookie;
+  }
+
+  /// 通过webRid获取直播间Web信息
+  Future<Map> _getRoomDataByHtml(
+    String webRid, {
+    CoreCancellation? cancellation,
+  }) async {
+    final stopwatch = Stopwatch()..start();
+    var dyCookie = await _getWebCookie(webRid, cancellation: cancellation);
+    _throwIfCancelled(cancellation);
+    final requestStopwatch = Stopwatch()..start();
+    var result = await HttpClient.instance.getText(
+      "https://live.douyin.com/$webRid",
+      queryParameters: {},
+      header: {
+        "Authority": kDefaultAuthority,
+        "Referer": kDefaultReferer,
+        "Cookie": dyCookie,
+        "User-Agent": kDefaultUserAgent,
+      },
+      cancellation: cancellation,
+    );
+    _throwIfCancelled(cancellation);
+    _logElapsed("_getRoomDataByHtml($webRid) request", requestStopwatch);
+    final parseStopwatch = Stopwatch()..start();
+    if (result.trim().isEmpty) {
+      throw CoreError("抖音直播间页面返回为空，请稍后再试", kind: CoreErrorKind.response);
+    }
+    if (!result.contains(r'\"state\"')) {
+      throw CoreError(
+        "抖音直播间页面数据不可用，可能是访问受限或页面结构已变化",
+        kind: CoreErrorKind.response,
+      );
+    }
+
+    var renderData = RegExp(
+          r'\{\\"state\\":\{\\"appStore.*?\]\\n',
+        ).firstMatch(result)?.group(0) ??
+        "";
+    if (renderData.isEmpty) {
+      throw CoreError("抖音直播间页面数据解析失败，请稍后再试", kind: CoreErrorKind.response);
+    }
+    var str = renderData
+        .trim()
+        .replaceAll('\\"', '"')
+        .replaceAll(r"\\", r"\")
+        .replaceAll(']\\n', "");
+    dynamic renderDataJson;
+    try {
+      renderDataJson = json.decode(str);
+    } catch (e) {
+      if (e is CoreCancelledError) rethrow;
+      throw CoreError(
+        "抖音直播间页面数据解析失败，请稍后再试",
+        kind: CoreErrorKind.response,
+        cause: e,
+      );
+    }
+    final state = renderDataJson["state"];
+    if (state is! Map) {
+      throw CoreError("抖音直播间页面状态数据异常", kind: CoreErrorKind.response);
+    }
+    _logElapsed("_getRoomDataByHtml($webRid) parse", parseStopwatch);
+    _logElapsed("_getRoomDataByHtml($webRid)", stopwatch);
+    return state;
+  }
+
+  /// 通过webRid获取直播间Web信息
+  Future<Map> _getRoomDataByApi(String webRid) async {
+    final stopwatch = Stopwatch()..start();
+    String serverUrl = "https://live.douyin.com/webcast/room/web/enter/";
+
+    var requestHeader = await getRequestHeaders();
+    requestHeader["Referer"] = "https://live.douyin.com/$webRid";
+
+    var uri = Uri.parse(serverUrl).replace(
+      scheme: "https",
+      port: 443,
+      queryParameters: {
+        "aid": '6383',
+        "app_name": "douyin_web",
+        "live_id": '1',
+        "device_platform": "web",
+        "language": "zh-CN",
+        "browser_language": "zh-CN",
+        "browser_platform": "Win32",
+        "browser_name": "Chrome",
+        "browser_version": "125.0.0.0",
+        "web_rid": webRid,
+        "msToken": "",
+      },
+    );
+    final signStopwatch = Stopwatch()..start();
+    var requestUrl = DouyinSign.getAbogusUrl(uri.toString(), kDefaultUserAgent);
+    _logElapsed("_getRoomDataByApi($webRid) a_bogus", signStopwatch);
+
+    final requestStopwatch = Stopwatch()..start();
+    var result = await HttpClient.instance.getJson(
+      requestUrl,
+      header: requestHeader,
+    );
+    _logElapsed("_getRoomDataByApi($webRid) request", requestStopwatch);
+
+    if (result is! Map) {
+      throw Exception("抖音接口返回格式异常");
+    }
+
+    final data = result["data"];
+    if (data is! Map) {
+      throw CoreError("抖音直播间数据为空，请稍后再试");
+    }
+    final rooms = data["data"];
+    if (rooms is! List || rooms.isEmpty) {
+      throw CoreError("抖音直播间数据为空，可能是房间不存在、未开播或被风控限制");
+    }
+
+    _logElapsed("_getRoomDataByApi($webRid)", stopwatch);
+    return data;
+  }
+
+  /// 通过roomId获取直播间信息
+  Future<Map> _getRoomDataByRoomId(String roomId) async {
+    var result = await HttpClient.instance.getJson(
+      'https://webcast.amemv.com/webcast/room/reflow/info/',
+      queryParameters: {
+        "type_id": 0,
+        "live_id": 1,
+        "room_id": roomId,
+        "sec_user_id": "",
+        "version_code": "99.99.99",
+        "app_id": 6383,
+      },
+      header: await getRequestHeaders(),
+    );
+    return result;
+  }
+
+  @override
+  Future<List<LivePlayQuality>> getPlayQualites({
+    required LiveRoomDetail detail,
+  }) async {
+    final stopwatch = Stopwatch()..start();
+    List<LivePlayQuality> qualities = [];
+
+    try {
+      var liveCoreData = detail.data["live_core_sdk_data"];
+
+      if (liveCoreData == null) return qualities;
+
+      var pullData = liveCoreData["pull_data"];
+
+      if (pullData == null) return qualities;
+
+      var options = pullData["options"];
+
+      var qulityList = options?["qualities"];
+
+      var streamData = pullData["stream_data"]?.toString() ?? "";
+
+      if (!streamData.startsWith('{')) {
+        var flvList =
+            (detail.data["flv_pull_url"] as Map).values.cast<String>().toList();
+        var hlsList = (detail.data["hls_pull_url_map"] as Map)
+            .values
+            .cast<String>()
+            .toList();
+        for (var quality in qulityList) {
+          int level = quality["level"];
+          List<String> urls = [];
+          var flvIndex = flvList.length - level;
+          if (flvIndex >= 0 && flvIndex < flvList.length) {
+            urls.add(flvList[flvIndex]);
+          }
+          var hlsIndex = hlsList.length - level;
+          if (hlsIndex >= 0 && hlsIndex < hlsList.length) {
+            urls.add(hlsList[hlsIndex]);
+          }
+          var qualityItem = LivePlayQuality(
+            quality: quality["name"],
+            sort: level,
+            data: urls,
+          );
+          if (urls.isNotEmpty) {
+            qualities.add(qualityItem);
+          }
+        }
+      } else {
+        var qualityData = json.decode(streamData)["data"] as Map;
+
+        for (var quality in qulityList) {
+          List<String> urls = [];
+
+          var flvUrl =
+              qualityData[quality["sdk_key"]]?["main"]?["flv"]?.toString();
+
+          if (flvUrl != null && flvUrl.isNotEmpty) {
+            urls.add(flvUrl);
+          }
+          var hlsUrl =
+              qualityData[quality["sdk_key"]]?["main"]?["hls"]?.toString();
+
+          if (hlsUrl != null && hlsUrl.isNotEmpty) {
+            urls.add(hlsUrl);
+          }
+
+          var qualityItem = LivePlayQuality(
+            quality: quality["name"],
+            sort: quality["level"],
+            data: urls,
+          );
+          if (urls.isNotEmpty) {
+            qualities.add(qualityItem);
+          }
+        }
+      }
+    } catch (e, stackTrace) {
+      if (e is CoreCancelledError) rethrow;
+      CoreLog.error(e);
+      CoreLog.error(stackTrace);
+    }
+
+    qualities.sort((a, b) => b.sort.compareTo(a.sort));
+    _logDebug("获取到的画质列表: ${qualities.map((q) => q.quality).toList()}");
+    _logElapsed("getPlayQualites(${detail.roomId})", stopwatch);
+    return qualities;
+  }
+
+  @override
+  Future<LivePlayUrl> getPlayUrls({
+    required LiveRoomDetail detail,
+    required LivePlayQuality quality,
+  }) async {
+    final stopwatch = Stopwatch()..start();
+    // 返回列表的副本，防止外部 clear() 影响原始数据
+    final result = LivePlayUrl(urls: List<String>.from(quality.data));
+    _logElapsed("getPlayUrls(${detail.roomId}, ${quality.quality})", stopwatch);
+    return result;
+  }
+
+  @override
+  Future<LiveSearchRoomResult> searchRooms(
+    String keyword, {
+    int page = 1,
+    CoreCancellation? cancellation,
+  }) async {
+    _throwIfCancelled(cancellation);
+    String serverUrl = "https://www.douyin.com/aweme/v1/web/live/search/";
+    var uri = Uri.parse(serverUrl).replace(
+      scheme: "https",
+      port: 443,
+      queryParameters: {
+        "device_platform": "webapp",
+        "aid": "6383",
+        "channel": "channel_pc_web",
+        "search_channel": "aweme_live",
+        "keyword": keyword,
+        "search_source": "switch_tab",
+        "query_correct_type": "1",
+        "is_filter_search": "0",
+        "from_group_id": "",
+        "offset": ((page - 1) * 10).toString(),
+        "count": "10",
+        "need_filter_settings": page == 1 ? "1" : "0",
+        "list_type": "single",
+        "pc_client_type": "1",
+        "version_code": "170400",
+        "version_name": "17.4.0",
+        "update_version_code": "170400",
+        "cookie_enabled": "true",
+        "screen_width": "1980",
+        "screen_height": "1080",
+        "browser_language": "zh-CN",
+        "browser_platform": "Win32",
+        "browser_name": "Edge",
+        "browser_version": "125.0.0.0",
+        "browser_online": "true",
+        "engine_name": "Blink",
+        "engine_version": "125.0.0.0",
+        "os_name": "Windows",
+        "os_version": "10",
+        "cpu_core_num": "12",
+        "device_memory": "8",
+        "platform": "PC",
+        "downlink": "10",
+        "effective_type": "4g",
+        "round_trip_time": "100",
+      },
+    );
+    final requestHeaders = await getRequestHeaders();
+    var dyCookie = "";
+    final savedCookie = _getCookieHeaderValue(requestHeaders);
+    if (savedCookie.isNotEmpty) {
+      dyCookie = _ensureCookieEndsWithSemicolon(savedCookie);
+    }
+    final configuredCookies = _parseCookieValue(savedCookie);
+    uri = uri.replace(
+      queryParameters: {
+        ...uri.queryParameters,
+        ..._searchSessionQueryParameters(configuredCookies),
+      },
+    );
+    // A user-provided Cookie already represents one coherent browser session.
+    // Do not precede every search with an anonymous live.douyin.com HEAD: that
+    // extra request can itself be rate-limited (444), and any fresh anonymous
+    // ttwid/nonce does not belong to the configured login session. Only obtain
+    // a fresh anonymous ttwid when the built-in fallback Cookie is being used.
+    if (cookie.trim().isEmpty) {
+      dynamic headResp;
+      try {
+        headResp = await HttpClient.instance.head(
+          'https://live.douyin.com',
+          header: requestHeaders,
+          cancellation: cancellation,
+        );
+        if (headResp.statusCode == 444) {
+          throw CoreError("", statusCode: 444, kind: CoreErrorKind.http);
+        }
+      } catch (error) {
+        if (error is CoreCancelledError ||
+            (error is CoreError && error.statusCode == 444)) {
+          rethrow;
+        }
+        _logDebug("抖音搜索预取 Cookie 失败，使用内置 ttwid 继续：$error");
+      }
+      final headCookies = <String>[];
+      headResp?.headers["set-cookie"]?.forEach((element) {
+        final headCookie = element.split(";").first.trim();
+        final separatorIndex = headCookie.indexOf("=");
+        if (separatorIndex <= 0) return;
+        final cookieName =
+            headCookie.substring(0, separatorIndex).trim().toLowerCase();
+        if (cookieName == "ttwid" || cookieName == "__ac_nonce") {
+          headCookies.add(headCookie);
+        }
+      });
+      dyCookie = _mergeCookieValues(savedCookie, headCookies.join("; "));
+    }
+    // HEAD has completed; do not begin the search GET after cancellation.
+    _throwIfCancelled(cancellation);
+    late final String requestUrl;
+    try {
+      requestUrl = _abogusSigner(uri.toString(), kSearchUserAgent);
+    } catch (error) {
+      throw CoreError(
+        "抖音直播搜索请求签名失败",
+        kind: CoreErrorKind.search,
+        cause: error,
+      );
+    }
+    _throwIfCancelled(cancellation);
+
+    final responseText = await HttpClient.instance.getText(
+      requestUrl,
+      queryParameters: {},
+      header: {
+        "Authority": 'www.douyin.com',
+        'accept': 'application/json, text/plain, */*',
+        'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        'cookie': dyCookie,
+        'origin': 'https://www.douyin.com',
+        'priority': 'u=1, i',
+        'referer':
+            'https://www.douyin.com/search/${Uri.encodeComponent(keyword)}?type=live',
+        'sec-ch-ua':
+            '"Microsoft Edge";v="125", "Chromium";v="125", "Not.A/Brand";v="24"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"Windows"',
+        'sec-fetch-dest': 'empty',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-site': 'same-origin',
+        'user-agent': kSearchUserAgent,
+      },
+      cancellation: cancellation,
+    );
+    _throwIfCancelled(cancellation);
+    final normalizedResponse =
+        responseText.trimLeft().replaceFirst('\ufeff', '');
+    dynamic result;
+    int? statusCode;
+    dynamic responseData;
+    if (normalizedResponse.isEmpty || normalizedResponse == 'blocked') {
+      final upstreamResult = await _trySearchWithUpstreamCompatibility(
+        uri: uri,
+        keyword: keyword,
+        requestHeaders: requestHeaders,
+        savedCookie: savedCookie,
+        cancellation: cancellation,
+      );
+      if (upstreamResult == null) {
+        throw CoreError("抖音直播搜索被限制，请稍后再试", kind: CoreErrorKind.search);
+      }
+      result = upstreamResult;
+      statusCode = 0;
+      responseData = upstreamResult["data"];
+    }
+    if (result == null) {
+      try {
+        result = json.decode(normalizedResponse);
+      } catch (error) {
+        final lowerResponse = normalizedResponse.toLowerCase();
+        if (lowerResponse.startsWith('<!doctype html') ||
+            lowerResponse.startsWith('<html') ||
+            lowerResponse.contains('__ac_nonce') ||
+            lowerResponse.contains('captcha')) {
+          throw CoreError(
+            "抖音直播搜索返回了验证页面，请重新网页登录后再试",
+            kind: CoreErrorKind.search,
+            cause: error,
+          );
+        }
+        throw _invalidDouyinSearchResponse(error);
+      }
+      if (result is! Map) throw _invalidDouyinSearchResponse();
+      statusCode = int.tryParse(result["status_code"]?.toString() ?? "");
+      responseData = result["data"];
+    }
+    _logDebug(
+      "抖音搜索主请求：status=${statusCode ?? 'missing'}，"
+      "data=${responseData is List ? responseData.length : 'invalid'}，"
+      "has_more=${result['has_more'] ?? 'missing'}",
+    );
+    if (statusCode == 2483) {
+      throw _douyinSearchAuthError();
+    }
+    if (statusCode != null && statusCode != 0) {
+      final upstreamResult = await _trySearchWithUpstreamCompatibility(
+        uri: uri,
+        keyword: keyword,
+        requestHeaders: requestHeaders,
+        savedCookie: savedCookie,
+        cancellation: cancellation,
+      );
+      if (upstreamResult == null) {
+        throw CoreError("抖音直播搜索被限制，请稍后再试", kind: CoreErrorKind.search);
+      }
+      result = upstreamResult;
+      statusCode = 0;
+      responseData = upstreamResult["data"];
+    }
+    if (statusCode == 0 && responseData is List && responseData.isEmpty) {
+      final upstreamResult = await _trySearchWithUpstreamCompatibility(
+        uri: uri,
+        keyword: keyword,
+        requestHeaders: requestHeaders,
+        savedCookie: savedCookie,
+        cancellation: cancellation,
+      );
+      if (upstreamResult != null) {
+        result = upstreamResult;
+        statusCode = 0;
+        responseData = upstreamResult["data"];
+      }
+    }
+    final data = responseData;
+    if (data is! List) throw _invalidDouyinSearchResponse();
+    var items = <LiveRoomItem>[];
+    for (final item in data.take(10)) {
+      if (item is! Map || item["lives"] is! Map) {
+        throw _invalidDouyinSearchResponse();
+      }
+      final rawData = item["lives"]["rawdata"];
+      if (rawData is! String || rawData.isEmpty) {
+        throw _invalidDouyinSearchResponse();
+      }
+      dynamic itemData;
+      try {
+        itemData = json.decode(rawData);
+      } catch (e) {
+        if (e is CoreCancelledError) rethrow;
+        throw _invalidDouyinSearchResponse(e);
+      }
+      if (itemData is! Map ||
+          itemData["owner"] is! Map ||
+          itemData["cover"] is! Map ||
+          itemData["stats"] is! Map ||
+          itemData["cover"]["url_list"] is! List ||
+          (itemData["cover"]["url_list"] as List).isEmpty) {
+        throw _invalidDouyinSearchResponse();
+      }
+      var roomItem = LiveRoomItem(
+        roomId: itemData["owner"]["web_rid"].toString(),
+        title: itemData["title"].toString(),
+        cover: itemData["cover"]["url_list"][0].toString(),
+        userName: itemData["owner"]["nickname"].toString(),
+        online: int.tryParse(itemData["stats"]["total_user"].toString()) ?? 0,
+      );
+      items.add(roomItem);
+    }
+    final responseHasMore = int.tryParse(result["has_more"]?.toString() ?? "");
+    final hasMore =
+        responseHasMore == null ? items.length >= 10 : responseHasMore > 0;
+    _logDebug("抖音搜索解析完成：rooms=${items.length}，hasMore=$hasMore");
+    return LiveSearchRoomResult(hasMore: hasMore, items: items);
+  }
+
+  Future<Map<dynamic, dynamic>?> _trySearchWithUpstreamCompatibility({
+    required Uri uri,
+    required String keyword,
+    required Map<String, dynamic> requestHeaders,
+    required String savedCookie,
+    CoreCancellation? cancellation,
+  }) async {
+    try {
+      final upstreamResult = await _retrySearchWithUpstreamStrategy(
+        uri: uri,
+        keyword: keyword,
+        requestHeaders: requestHeaders,
+        savedCookie: savedCookie,
+        cancellation: cancellation,
+      );
+      final upstreamStatus = int.tryParse(
+        upstreamResult["status_code"]?.toString() ?? "",
+      );
+      final upstreamData = upstreamResult["data"];
+      _logDebug(
+        "抖音搜索上游兼容重试：status=${upstreamStatus ?? 'missing'}，"
+        "data=${upstreamData is List ? upstreamData.length : 'invalid'}，"
+        "has_more=${upstreamResult['has_more'] ?? 'missing'}",
+      );
+      if (upstreamStatus == 0 &&
+          upstreamData is List &&
+          upstreamData.isNotEmpty) {
+        return upstreamResult;
+      }
+    } catch (error) {
+      if (error is CoreCancelledError) rethrow;
+      _logDebug("抖音搜索上游兼容重试失败：${error.runtimeType}");
+    }
+    return null;
+  }
+
+  Future<Map<dynamic, dynamic>> _retrySearchWithUpstreamStrategy({
+    required Uri uri,
+    required String keyword,
+    required Map<String, dynamic> requestHeaders,
+    required String savedCookie,
+    CoreCancellation? cancellation,
+  }) async {
+    _throwIfCancelled(cancellation);
+    dynamic headResponse;
+    try {
+      headResponse = await HttpClient.instance.head(
+        'https://live.douyin.com',
+        header: requestHeaders,
+        cancellation: cancellation,
+      );
+    } catch (error) {
+      if (error is CoreCancelledError) rethrow;
+      _logDebug("抖音搜索上游兼容 HEAD 失败：${error.runtimeType}");
+    }
+    _throwIfCancelled(cancellation);
+
+    final headCookies = <String>[];
+    headResponse?.headers["set-cookie"]?.forEach((element) {
+      final headCookie = element.split(";").first.trim();
+      final separator = headCookie.indexOf('=');
+      if (separator <= 0) return;
+      final name = headCookie.substring(0, separator).trim().toLowerCase();
+      if (name == 'ttwid' || name == '__ac_nonce') {
+        headCookies.add(headCookie);
+      }
+    });
+    final upstreamCookie = _mergeCookieValues(
+      savedCookie,
+      headCookies.join('; '),
+    );
+
+    final query = <String, String>{...uri.queryParameters}
+      ..remove('msToken')
+      ..remove('verifyFp')
+      ..remove('fp')
+      ..remove('a_bogus')
+      ..remove('need_filter_settings')
+      ..remove('list_type')
+      ..remove('update_version_code')
+      ..['webid'] = '7382872326016435738';
+    final upstreamUri = uri.replace(queryParameters: query);
+    final responseText = await HttpClient.instance.getText(
+      upstreamUri.toString(),
+      queryParameters: {},
+      header: {
+        'Authority': 'www.douyin.com',
+        'accept': 'application/json, text/plain, */*',
+        'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        'cookie': upstreamCookie,
+        'priority': 'u=1, i',
+        'referer':
+            'https://www.douyin.com/search/${Uri.encodeComponent(keyword)}?type=live',
+        'sec-ch-ua':
+            '"Microsoft Edge";v="125", "Chromium";v="125", "Not.A/Brand";v="24"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"Windows"',
+        'sec-fetch-dest': 'empty',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-site': 'same-origin',
+        'user-agent': kDefaultUserAgent,
+      },
+      cancellation: cancellation,
+    );
+    _throwIfCancelled(cancellation);
+    final normalized = responseText.trimLeft().replaceFirst('\ufeff', '');
+    final decoded = json.decode(normalized);
+    if (decoded is! Map) throw _invalidDouyinSearchResponse();
+    return decoded;
+  }
+
+  String _getCookieHeaderValue(Map<String, dynamic> requestHeaders) {
+    return (requestHeaders["Cookie"] ?? requestHeaders["cookie"] ?? "")
+        .toString()
+        .trim();
+  }
+
+  String _ensureCookieEndsWithSemicolon(String value) {
+    final cookie = value.trim();
+    if (cookie.isEmpty || cookie.endsWith(";")) return cookie;
+    return "$cookie;";
+  }
+
+  Map<String, String> _searchSessionQueryParameters(
+    Map<String, String> cookies,
+  ) {
+    final result = <String, String>{};
+    final cookieWebId = _firstCookieValue(
+      cookies,
+      const ['tt_webid', 'tt_webid_v2', 'webid'],
+    );
+    result['webid'] =
+        _isValidWebId(cookieWebId) ? cookieWebId! : _fallbackSearchWebId;
+
+    final msToken = _firstCookieValue(cookies, const ['msToken']);
+    if (msToken != null && msToken.isNotEmpty) {
+      result['msToken'] = msToken;
+    }
+
+    final verifyFp = _firstCookieValue(
+      cookies,
+      const ['s_v_web_id', 'verifyFp', 'verify_fp'],
+    );
+    if (verifyFp != null && verifyFp.isNotEmpty) {
+      result['verifyFp'] = verifyFp;
+      result['fp'] = verifyFp;
+    }
+    return result;
+  }
+
+  String? _firstCookieValue(
+    Map<String, String> cookies,
+    List<String> candidates,
+  ) {
+    for (final candidate in candidates) {
+      final normalized = candidate.toLowerCase();
+      for (final entry in cookies.entries) {
+        if (entry.key.toLowerCase() == normalized && entry.value.isNotEmpty) {
+          return entry.value;
+        }
+      }
+    }
+    return null;
+  }
+
+  bool _isValidWebId(String? value) {
+    return value != null && RegExp(r'^\d{16,22}$').hasMatch(value);
+  }
+
+  String _generateSearchWebId() {
+    final random = Random.secure();
+    return '7${List.generate(18, (_) => random.nextInt(10)).join()}';
+  }
+
+  DouyinSearchAuthError _douyinSearchAuthError() {
+    final configuredCookie = cookie.trim();
+    if (configuredCookie.isEmpty) {
+      return DouyinSearchAuthError(
+        DouyinSearchAuthFailureReason.missingCookie,
+      );
+    }
+    if (DouyinCookieHelper.isOnlyTtwid(configuredCookie)) {
+      return DouyinSearchAuthError(
+        DouyinSearchAuthFailureReason.onlyTtwid,
+      );
+    }
+    if (!DouyinCookieHelper.hasLoginSession(configuredCookie)) {
+      return DouyinSearchAuthError(
+        DouyinSearchAuthFailureReason.incompleteCookie,
+      );
+    }
+    final expiry = DouyinCookieHelper.parseExpiry(configuredCookie);
+    if (expiry != null && !expiry.isAfter(DateTime.now())) {
+      return DouyinSearchAuthError(DouyinSearchAuthFailureReason.expired);
+    }
+    return DouyinSearchAuthError(DouyinSearchAuthFailureReason.rejected);
+  }
+
+  CoreError _invalidDouyinSearchResponse([Object? cause]) {
+    return CoreError(
+      "抖音直播搜索响应格式异常",
+      kind: CoreErrorKind.response,
+      cause: cause,
+    );
+  }
+
+  @override
+  Future<LiveSearchAnchorResult> searchAnchors(
+    String keyword, {
+    int page = 1,
+    CoreCancellation? cancellation,
+  }) async {
+    final result = await searchRooms(
+      keyword,
+      page: page,
+      cancellation: cancellation,
+    );
+    _throwIfCancelled(cancellation);
+    final lowerKeyword = keyword.trim().toLowerCase();
+    final rooms = result.items.toList()
+      ..sort((a, b) {
+        final aMatched = a.userName.toLowerCase().contains(lowerKeyword);
+        final bMatched = b.userName.toLowerCase().contains(lowerKeyword);
+        if (aMatched != bMatched) {
+          return aMatched ? -1 : 1;
+        }
+        return b.online.compareTo(a.online);
+      });
+    final seenRoomIds = <String>{};
+    return LiveSearchAnchorResult(
+      items: rooms
+          .where((room) => seenRoomIds.add(room.roomId))
+          .take(10)
+          .map(
+            (room) => LiveAnchorItem(
+              roomId: room.roomId,
+              userName: room.userName,
+              avatar: "",
+              liveStatus: true,
+            ),
+          )
+          .toList(),
+      metadata: LiveSearchMetadata(
+        continuation: result.metadata.continuation,
+        origin: SearchOrigin.derived,
+        fieldSources: const <String, SearchFieldSource>{
+          "avatar": SearchFieldSource.unavailable,
+          "liveStatus": SearchFieldSource.derived,
+        },
+      ),
+    );
+  }
+
+  @override
+  Future<bool> getLiveStatus({required String roomId}) async {
+    final targetId = roomId.trim();
+    if (targetId.isEmpty) return false;
+    LiveRoomDetail? resolvedDetail;
+    try {
+      final status = await _tryGetLiveStatus(targetId);
+      if (status == true) return true;
+      resolvedDetail = await getRoomDetail(roomId: targetId);
+      if (resolvedDetail.status) return true;
+      if (status != null) return status;
+      return resolvedDetail.status;
+    } catch (e) {
+      if (e is CoreCancelledError) rethrow;
+      if (e is CoreError && e.statusCode == 444) rethrow;
+      if (resolvedDetail != null) return resolvedDetail.status;
+      CoreLog.error(e);
+      return false;
+    }
+  }
+
+  Future<bool?> _tryGetLiveStatus(String targetId) async {
+    final attempts = <Future<bool?> Function()>[];
+    if (targetId.length <= 16) {
+      attempts.add(() => _getLiveStatusByWebRid(targetId));
+      attempts.add(() => _getLiveStatusByRoomId(targetId));
+    } else {
+      attempts.add(() => _getLiveStatusByRoomId(targetId));
+      attempts.add(() => _getLiveStatusByWebRid(targetId));
+    }
+
+    Object? lastError;
+    for (var i = 0; i < attempts.length; i++) {
+      try {
+        return await attempts[i]();
+      } catch (e) {
+        if (e is CoreCancelledError) rethrow;
+        if (e is CoreError && e.statusCode == 444) rethrow;
+        lastError = e;
+        if (i == 0) {
+          _logDebug("getLiveStatus($targetId) 第1路失败，尝试第2路：$e");
+        }
+      }
+    }
+
+    if (lastError != null) CoreLog.error(lastError);
+    return null;
+  }
+
+  Future<bool> _getLiveStatusByWebRid(String webRid) async {
+    final data = await _getRoomDataByApi(webRid);
+    final roomList = data["data"];
+    if (roomList is List && roomList.isNotEmpty) {
+      final roomData = roomList.first;
+      return _isDouyinLiveStatus(roomData);
+    }
+    throw CoreError("抖音直播状态数据为空");
+  }
+
+  Future<bool?> _getLiveStatusByRoomId(String roomId) async {
+    final roomData = await _getRoomDataByRoomId(roomId);
+    final room = roomData["data"]?["room"];
+    if (room is! Map) return null;
+    final status = _parseDouyinStatus(
+      room["status"] ?? room["live_status"] ?? room["room_status"],
+    );
+    if (status == null) return null;
+    if (status == 4) {
+      final webRid = room["owner"]?["web_rid"]?.toString().trim() ?? "";
+      if (webRid.isNotEmpty) {
+        return _getLiveStatusByWebRid(webRid);
+      }
+    }
+    return status == 2;
+  }
+
+  bool _isDouyinLiveStatus(dynamic data) {
+    if (data is! Map) return false;
+    final candidates = <dynamic>[
+      data["status"],
+      data["live_status"],
+      data["room_status"],
+      data["status_str"],
+    ];
+    for (final candidate in candidates) {
+      final parsed = _parseDouyinStatus(candidate);
+      if (parsed != null) return parsed == 2;
+    }
+    return false;
+  }
+
+  int? _parseDouyinStatus(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value.trim());
+    if (value is Map) {
+      for (final key in const ["status", "live_status", "room_status"]) {
+        final parsed = _parseDouyinStatus(value[key]);
+        if (parsed != null) return parsed;
+      }
+    }
+    return null;
+  }
+
+  @override
+  Future<List<LiveSuperChatMessage>> getSuperChatMessage({
+    required String roomId,
+    LiveRoomDetail? detail,
+  }) {
+    return Future.value(<LiveSuperChatMessage>[]);
+  }
+
+  @override
+  Future<List<LiveContributionRankItem>> getContributionRank({
+    required String roomId,
+    LiveRoomDetail? detail,
+  }) async {
+    final roomDetail = detail ?? await getRoomDetail(roomId: roomId);
+    final webRid = roomDetail.roomId.isNotEmpty ? roomDetail.roomId : roomId;
+    final danmakuArgs = roomDetail.danmakuData is DouyinDanmakuArgs
+        ? roomDetail.danmakuData as DouyinDanmakuArgs
+        : null;
+
+    final roomInfo = await _getRoomDataByApi(webRid);
+    final roomList = (roomInfo["data"] as List?) ?? const [];
+    if (roomList.isEmpty) return [];
+    final roomData = roomList.first;
+    final owner = roomData["owner"] ?? roomInfo["user"] ?? {};
+    final anchorId =
+        owner["id_str"]?.toString() ?? owner["id"]?.toString() ?? "";
+    final secAnchorId = owner["sec_uid"]?.toString() ?? "";
+    final realRoomId =
+        danmakuArgs?.roomId ?? roomData["id_str"]?.toString() ?? "";
+    if (anchorId.isEmpty || secAnchorId.isEmpty || realRoomId.isEmpty) {
+      return [];
+    }
+
+    final requestHeader = await getRequestHeaders();
+    requestHeader["Referer"] = "https://live.douyin.com/$webRid";
+
+    final uri =
+        Uri.parse("https://live.douyin.com/webcast/ranklist/audience/").replace(
+      queryParameters: {
+        "aid": "6383",
+        "app_name": "douyin_web",
+        "live_id": "1",
+        "device_platform": "web",
+        "language": "zh-CN",
+        "enter_from": "link_share",
+        "cookie_enabled": "true",
+        "screen_width": "1920",
+        "screen_height": "1080",
+        "browser_language": "zh-CN",
+        "browser_platform": "Win32",
+        "browser_name": "Chrome",
+        "browser_version": "125.0.0.0",
+        "os_name": "Windows",
+        "os_version": "10",
+        "webcast_sdk_version": "2450",
+        "room_id": realRoomId,
+        "anchor_id": anchorId,
+        "sec_anchor_id": secAnchorId,
+        "ignoreToast": "true",
+        "rank_type": "30",
+        "msToken": "",
+      },
+    );
+    final requestUrl = DouyinSign.getAbogusUrl(
+      uri.toString(),
+      kDefaultUserAgent,
+    );
+    final result = await HttpClient.instance.getJson(
+      requestUrl,
+      header: requestHeader,
+    );
+    final items = (result["data"]?["ranks"] as List?) ?? const [];
+    return items
+        .asMap()
+        .entries
+        .map((entry) {
+          final item = entry.value;
+          final user = item["user"] ?? {};
+          final payGrade = user["pay_grade"] ?? {};
+          final fansData = user["fans_club"]?["data"] ?? {};
+          final userLevel = int.tryParse(payGrade["level"].toString());
+          final fansLevel = int.tryParse(fansData["level"].toString());
+          final scoreText = _resolveDouyinRankScore(item);
+          final scoreDescription =
+              item["score_description"]?.toString().trim() ?? "";
+          final exactlyScore = item["exactly_score"]?.toString().trim() ?? "";
+          String? scoreDetail;
+          if (scoreDescription.isNotEmpty && scoreDescription != scoreText) {
+            scoreDetail = scoreDescription;
+          } else if (exactlyScore.isNotEmpty && exactlyScore != scoreText) {
+            scoreDetail = exactlyScore;
+          } else {
+            final gapDescription =
+                item["gap_description"]?.toString().trim() ?? "";
+            scoreDetail = gapDescription.isEmpty ? null : gapDescription;
+          }
+
+          return LiveContributionRankItem(
+            rank: _resolveDouyinRank(item, entry.key),
+            userName: user["nickname"]?.toString() ?? "",
+            avatar: _firstImageUrl(user["avatar_thumb"]),
+            scoreText: scoreText,
+            scoreDetail: scoreDetail,
+            userLevel: userLevel,
+            userLevelText:
+                userLevel == null || userLevel <= 0 ? null : "财富 $userLevel",
+            userLevelIcon: _firstImageUrl(payGrade["new_im_icon_with_level"]),
+            fansLevel: fansLevel,
+            fansName: fansData["club_name"]?.toString(),
+            fansIcon: _pickDouyinBadgeIcon(fansData["badge"]?["icons"]),
+          );
+        })
+        .where((item) => item.userName.trim().isNotEmpty)
+        .toList();
+  }
+
+  int _resolveDouyinRank(Map item, int index) {
+    final parsed = int.tryParse(item["rank"]?.toString() ?? "");
+    if (parsed == null || parsed <= 0) return index + 1;
+    if (parsed == 1 && index > 0) return index + 1;
+    return parsed;
+  }
+
+  String _firstImageUrl(dynamic data) {
+    if (data is! Map) return "";
+    final urls = data["url_list"];
+    if (urls is List && urls.isNotEmpty) return urls.first.toString();
+    return "";
+  }
+
+  String? _pickDouyinBadgeIcon(dynamic icons) {
+    if (icons is! Map) return null;
+    return null;
+  }
+
+  String _resolveDouyinRankScore(Map item) {
+    final scoreText = item["score_description"]?.toString().trim() ?? "";
+    if (scoreText.isNotEmpty) return scoreText;
+    final exactlyScore = item["exactly_score"]?.toString().trim() ?? "";
+    return exactlyScore.isNotEmpty ? exactlyScore : item["score"]?.toString() ?? "0";
+  }
+
+  //生成指定长度的16进制随机字符串
+  String generateRandomString(int length) {
+    var random = Random.secure();
+    var values = List<int>.generate(length, (i) => random.nextInt(16));
+    StringBuffer stringBuffer = StringBuffer();
+    for (var item in values) {
+      stringBuffer.write(item.toRadixString(16));
+    }
+    return stringBuffer.toString();
+  }
+
+  // 生成随机的数字
+  int generateRandomNumber(int length) {
+    var random = Random.secure();
+    var values = List<int>.generate(length, (i) => random.nextInt(10));
+    StringBuffer stringBuffer = StringBuffer();
+    for (var item in values) {
+      stringBuffer.write(item);
+    }
+    return int.tryParse(stringBuffer.toString()) ??
+        Random().nextInt(1000000000);
+  }
+}
