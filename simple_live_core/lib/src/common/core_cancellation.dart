@@ -1,6 +1,8 @@
 abstract interface class CoreCancellation {
   bool get isCancelled;
 
+  Object? get reason;
+
   void cancel([Object? reason]);
 
   void addListener(void Function() listener);

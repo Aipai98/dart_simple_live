@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:simple_live_core/src/common/http_client.dart';
+import 'package:simple_live_core/src/common/core_cancellation.dart';
 import 'package:simple_live_core/src/danmaku/douyu_danmaku.dart';
 import 'package:simple_live_core/src/interface/live_danmaku.dart';
 import 'package:simple_live_core/src/interface/live_site.dart';
@@ -15,6 +16,7 @@ import 'package:simple_live_core/src/model/live_search_result.dart';
 import 'package:simple_live_core/src/model/live_room_detail.dart';
 import 'package:simple_live_core/src/model/live_play_quality.dart';
 import 'package:simple_live_core/src/model/live_category_result.dart';
+import 'package:simple_live_core/src/model/live_contribution_rank.dart';
 import 'package:html_unescape/html_unescape.dart';
 import 'package:simple_live_core/src/scripts/douyu_sign.dart';
 
@@ -260,6 +262,7 @@ class DouyuSite implements LiveSite {
   Future<LiveSearchRoomResult> searchRooms(
     String keyword, {
     int page = 1,
+    CoreCancellation? cancellation,
   }) async {
     var did = generateRandomString(32);
     var result = await CoreHttpClient.instance.getJson(
@@ -324,6 +327,7 @@ class DouyuSite implements LiveSite {
   Future<LiveSearchAnchorResult> searchAnchors(
     String keyword, {
     int page = 1,
+    CoreCancellation? cancellation,
   }) async {
     var did = generateRandomString(32);
     var result = await CoreHttpClient.instance.getJson(
@@ -381,8 +385,17 @@ class DouyuSite implements LiveSite {
   @override
   Future<List<LiveSuperChatMessage>> getSuperChatMessage({
     required String roomId,
+    LiveRoomDetail? detail,
   }) {
     //尚不支持
+    return Future.value([]);
+  }
+
+  @override
+  Future<List<LiveContributionRankItem>> getContributionRank({
+    required String roomId,
+    LiveRoomDetail? detail,
+  }) {
     return Future.value([]);
   }
 }

@@ -448,7 +448,7 @@ class HuyaSite implements LiveSite {
 
   @override
   Future<LiveSearchRoomResult> searchRooms(String keyword,
-      {int page = 1}) async {
+      {int page = 1, CoreCancellation? cancellation}) async {
     var resultText = await CoreHttpClient.instance.getJson(
       "https://search.cdn.huya.com/",
       queryParameters: {
@@ -491,7 +491,7 @@ class HuyaSite implements LiveSite {
 
   @override
   Future<LiveSearchAnchorResult> searchAnchors(String keyword,
-      {int page = 1}) async {
+      {int page = 1, CoreCancellation? cancellation}) async {
     var resultText = await CoreHttpClient.instance.getJson(
       "https://search.cdn.huya.com/",
       queryParameters: {
@@ -661,9 +661,19 @@ class HuyaSite implements LiveSite {
   }
 
   @override
-  Future<List<LiveSuperChatMessage>> getSuperChatMessage(
-      {required String roomId}) {
+  Future<List<LiveSuperChatMessage>> getSuperChatMessage({
+    required String roomId,
+    LiveRoomDetail? detail,
+  }) {
     //尚不支持
+    return Future.value([]);
+  }
+
+  @override
+  Future<List<LiveContributionRankItem>> getContributionRank({
+    required String roomId,
+    LiveRoomDetail? detail,
+  }) {
     return Future.value([]);
   }
 }
