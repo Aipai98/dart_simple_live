@@ -532,7 +532,6 @@ class HuyaSite implements LiveSite {
     var roomInfo = await _getRoomInfo(roomId);
     var status = roomInfo["roomInfo"]["eLiveStatus"] as int;
     if (status == 2) return LiveStatusState.live;
-    if (status == 1) return LiveStatusState.preparing;
     return LiveStatusState.offline;
   }
 
