@@ -8,4 +8,4 @@ environment:
 
 dependencies:
   flutter_js:
-    path: ../../simple_live_app/third_party/flutter_js
+    path: ../flutter_js
