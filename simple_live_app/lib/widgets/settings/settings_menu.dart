@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:simple_live_app/app/app_style.dart';
+import 'package:simple_live_app/app/utils.dart';
 
 class SettingsMenu<T> extends StatelessWidget {
   final String title;
@@ -58,33 +59,37 @@ class SettingsMenu<T> extends StatelessWidget {
   }
 
   void openMenu(BuildContext context) {
-    showModalBottomSheet(
+    Utils.showModalBottomSheetSafe(
       context: context,
       showDragHandle: true,
       useSafeArea: true, //useSafeArea似乎无效
-      builder: (_) => SafeArea(
-        top: false,
+      builder: (_) => Utils.bottomSheetSafeArea(
         child: SingleChildScrollView(
-          child: RadioGroup(
-            groupValue: value,
-            onChanged: (e) {
-              Get.back();
-              onChanged?.call(e as T);
-            },
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: valueMap.keys
-                  .map(
-                    (e) => RadioListTile(
-                      value: e,
-                      title: Text(
-                        (valueMap[e]?.tr) ?? "???",
-                        style: Get.textTheme.bodyMedium,
-                      ),
-                    ),
-                  )
-                  .toList(),
-            ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              RadioGroup<T>(
+                groupValue: value,
+                onChanged: (selected) {
+                  Get.back();
+                  if (selected != null) onChanged?.call(selected as T);
+                },
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: valueMap.keys
+                      .map(
+                        (e) => RadioListTile(
+                          value: e,
+                          title: Text(
+                            (valueMap[e]?.tr) ?? "???",
+                            style: Get.textTheme.bodyMedium,
+                          ),
+                        ),
+                      )
+                      .toList(),
+                ),
+              ),
+            ],
           ),
         ),
       ),

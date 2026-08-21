@@ -1,22 +1,13 @@
-import 'dart:convert';
-import 'dart:io';
-import 'package:flutter/foundation.dart';
-import 'package:file_picker/file_picker.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/app/controller/base_controller.dart';
-import 'package:simple_live_app/app/log.dart';
-import 'package:path/path.dart' as p;
 import 'package:simple_live_app/app/utils.dart';
-import 'package:simple_live_app/services/local_storage_service.dart';
+import 'package:simple_live_app/services/mpv_options_service.dart';
 
 class OtherSettingsController extends BaseController {
-  RxList<LogFileModel> logFiles = <LogFileModel>[].obs;
-
-  var videoOutputDrivers = {
+  final videoOutputDrivers = {
     "gpu": "gpu",
     "gpu-next": "gpu-next",
     "xv": "xv (X11 only)",
@@ -31,13 +22,13 @@ class OtherSettingsController extends BaseController {
     "mediacodec_embed": "mediacodec_embed (Android only)",
   };
 
-  var audioOutputDrivers = {
+  final audioOutputDrivers = {
     "null": "null (No audio output)",
     "pulse": "pulse (Linux, uses PulseAudio)",
     "pipewire": "pipewire (Linux, via Pulse compatibility or native)",
     "alsa": "alsa (Linux only)",
     "oss": "oss (Linux only)",
-    "jack": "jack (Linux/macOS, low-latency audio)",
+    "jack": "jack (Linux/macOS, low-latency)",
     "directsound": "directsound (Windows only)",
     "wasapi": "wasapi (Windows only)",
     "winmm": "winmm (Windows only, legacy API)",
@@ -49,11 +40,11 @@ class OtherSettingsController extends BaseController {
     "pcm": "pcm (Cross-platform)",
     "sdl": "sdl (Cross-platform, via SDL library)",
     "openal": "openal (Cross-platform, OpenAL backend)",
-    "libao": "libao (Cross-platform, uses libao library)",
-    "auto": "auto (Not available)"
+    "libao": "libao (Cross-platform, uses libao)",
+    "auto": "auto (Not available)",
   };
 
-  var hardwareDecoder = {
+  final hardwareDecoder = {
     "no": "no",
     "auto": "auto",
     "auto-safe": "auto-safe",
@@ -80,167 +71,57 @@ class OtherSettingsController extends BaseController {
     "cuda": "cuda",
     "cuda-copy": "cuda-copy",
     "crystalhd": "crystalhd",
-    "rkmpp": "rkmpp"
+    "rkmpp": "rkmpp",
   };
 
-  @override
-  void onInit() {
-    loadLogFiles();
-    super.onInit();
-  }
-
-  void setLogEnable(e) {
-    AppSettingsController.instance.setLogEnable(e);
-    if (e) {
-      Log.initWriter();
-      Future.delayed(const Duration(milliseconds: 100), () {
-        loadLogFiles();
-      });
-    } else {
-      Log.disposeWriter();
-    }
-  }
-
-  void loadLogFiles() async {
-    var supportDir = await getApplicationSupportDirectory();
-    var logDir = Directory("${supportDir.path}/log");
-    if (!await logDir.exists()) {
-      await logDir.create();
-    }
-    logFiles.clear();
-    await logDir.list().forEach((element) {
-      var file = element as File;
-      var name = p.basename(file.path);
-      var time = file.lastModifiedSync();
-      var size = file.lengthSync();
-      logFiles.add(LogFileModel(name, file.path, time, size));
-    });
-    //logFiles 名称倒序
-    logFiles.sort((a, b) => b.time.compareTo(a.time));
-  }
-
-  void cleanLog() async {
-    if (AppSettingsController.instance.logEnable.value) {
-      SmartDialog.showToast("请先关闭日志记录");
-      return;
-    }
-
-    var supportDir = await getApplicationSupportDirectory();
-    var logDir = Directory("${supportDir.path}/log");
-    if (await logDir.exists()) {
-      await logDir.delete(recursive: true);
-    }
-    loadLogFiles();
-  }
-
-  void shareLogFile(LogFileModel item) {
-    SharePlus.instance.share(ShareParams(
-      files: [XFile(item.path)],
-    ));
-  }
-
-  void saveLogFile(LogFileModel item) async {
-    var filePath = await FilePicker.platform.saveFile(
-      allowedExtensions: ['log'],
-      type: FileType.custom,
-      fileName: item.name,
-      bytes: Uint8List(0),
+  Future<void> editMpvAdvancedOptions() async {
+    final textController = TextEditingController(
+      text: AppSettingsController.instance.mpvAdvancedOptions.value,
     );
-    if (filePath != null) {
-      var file = File(item.path);
-      await file.copy(filePath);
-      SmartDialog.showToast("保存成功");
-    }
+    final value = await Utils.showDialogSafe<String>(
+      context: Get.context!,
+      builder: (_) => AlertDialog(
+        title: const Text("高级 mpv options"),
+        content: SizedBox(
+          width: 520,
+          child: TextField(
+            controller: textController,
+            minLines: 8,
+            maxLines: 14,
+            decoration: const InputDecoration(
+              border: OutlineInputBorder(),
+              hintText: "每行一个，例如 scale=spline36",
+            ),
+            autofocus: true,
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: Get.back, child: const Text("取消")),
+          TextButton(
+            onPressed: () => Get.back(result: textController.text),
+            child: const Text("确定"),
+          ),
+        ],
+      ),
+    );
+    textController.dispose();
+    if (value == null) return;
+    AppSettingsController.instance.setMpvAdvancedOptions(value);
+    SmartDialog.showToast("已保存，重开直播间后生效");
+    update();
   }
 
-  void exportConfig() async {
-    try {
-      // 组装数据
-      var data = {
-        "type": "simple_live",
-        "platform": Platform.operatingSystem,
-        "version": 1,
-        "time": DateTime.now().millisecondsSinceEpoch,
-        "config": LocalStorageService.instance.settingsBox.toMap(),
-        "shield": LocalStorageService.instance.shieldBox.toMap(),
-      };
-
-      var bytes = Uint8List.fromList(utf8.encode(jsonEncode(data)));
-
-      // FilePicker 直接写入
-      var inlineSave = Platform.isAndroid || Platform.isIOS || kIsWeb;
-
-      var path = await FilePicker.platform.saveFile(
-        allowedExtensions: ['json'],
-        type: FileType.custom,
-        fileName: "simple_live_config.json",
-        bytes: inlineSave ? bytes : null,
-      );
-
-      if (path == null && !kIsWeb) {
-        SmartDialog.showToast("保存取消");
-        return;
-      }
-
-      // 桌面平台需要手动写入
-      if (!inlineSave && path != null) {
-        await File(path).writeAsBytes(bytes);
-      }
-
-      SmartDialog.showToast("保存成功");
-    } catch (e) {
-      Log.logPrint(e);
-      SmartDialog.showToast("导出失败:$e");
-    }
+  Future<void> importMpvConf() async {
+    final path = await MpvOptionsService.importMpvConf();
+    if (path == null) return;
+    AppSettingsController.instance.setImportedMpvConfPath(path);
+    SmartDialog.showToast("已导入 mpv.conf，重开直播间后生效");
+    update();
   }
 
-  void importConfig() async {
-    try {
-      var file = await FilePicker.platform.pickFiles(
-        allowedExtensions: ['json'],
-        type: FileType.custom,
-      );
-      if (file == null) {
-        return;
-      }
-      var filePath = file.files.single.path!;
-      var data = jsonDecode(await File(filePath).readAsString());
-      if (data["type"] != "simple_live") {
-        SmartDialog.showToast("不支持的配置文件");
-        return;
-      }
-      // 检查platform
-      if (data["platform"] != Platform.operatingSystem &&
-          !await Utils.showAlertDialog("导入配置文件平台不匹配,是否继续导入?", title: "平台不匹配")) {
-        return;
-      }
-      LocalStorageService.instance.settingsBox.clear();
-      LocalStorageService.instance.shieldBox.clear();
-      LocalStorageService.instance.settingsBox.putAll(data["config"]);
-      LocalStorageService.instance.shieldBox
-          .putAll(data["shield"].cast<String, String>());
-      SmartDialog.showToast("导入成功,重启生效");
-    } catch (e) {
-      Log.logPrint(e);
-      SmartDialog.showToast("导入失败:$e");
-    }
+  void clearImportedMpvConf() {
+    AppSettingsController.instance.setImportedMpvConfPath("");
+    SmartDialog.showToast("已清除导入配置");
+    update();
   }
-
-  void resetDefaultConfig() {
-    Utils.showAlertDialog("是否重置所有配置为默认值?").then((value) {
-      if (value) {
-        LocalStorageService.instance.settingsBox.clear();
-        LocalStorageService.instance.shieldBox.clear();
-        SmartDialog.showToast("重置成功,重启生效");
-      }
-    });
-  }
-}
-
-class LogFileModel {
-  late String name;
-  late String path;
-  late DateTime time;
-  late int size;
-  LogFileModel(this.name, this.path, this.time, this.size);
 }

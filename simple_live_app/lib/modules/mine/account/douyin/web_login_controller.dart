@@ -1,0 +1,303 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutter/services.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
+import 'package:get/get.dart';
+import 'package:simple_live_app/app/controller/base_controller.dart';
+import 'package:simple_live_app/app/log.dart';
+import 'package:simple_live_app/app/utils.dart';
+import 'package:simple_live_app/modules/mine/account/account_controller.dart';
+import 'package:simple_live_app/services/douyin_account_service.dart';
+import 'package:webview_flutter/webview_flutter.dart' as ohos_webview;
+
+class DouyinWebLoginController extends BaseController {
+  static const _loginUrl = 'https://www.douyin.com/';
+  static const _desktopChromeUserAgent =
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+      '(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.0';
+  static const _desktopSafariUserAgent =
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+      'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15';
+  static const _ohosWebCookieChannel = MethodChannel(
+    'simple_live/ohos_web_cookie',
+  );
+
+  InAppWebViewController? webViewController;
+  ohos_webview.WebViewController? ohosWebViewController;
+  CookieManager? cookieManager;
+  final progress = 0.0.obs;
+  final checking = false.obs;
+  final errorMessage = ''.obs;
+  Timer? _sessionPollTimer;
+  bool _pageReady = false;
+
+  @override
+  void onInit() {
+    super.onInit();
+    if (Utils.isOhos) {
+      _initializeOhosWebView();
+    }
+    _sessionPollTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      if (_pageReady) {
+        unawaited(saveCookie(silent: true));
+      }
+    });
+  }
+
+  @override
+  void onClose() {
+    _sessionPollTimer?.cancel();
+    super.onClose();
+  }
+
+  void _initializeOhosWebView() {
+    final controller = ohos_webview.WebViewController()
+      ..setJavaScriptMode(ohos_webview.JavaScriptMode.unrestricted)
+      ..setUserAgent(userAgent)
+      ..setNavigationDelegate(
+        ohos_webview.NavigationDelegate(
+          onProgress: (value) => progress.value = value / 100,
+          onPageStarted: (_) {
+            _pageReady = false;
+            progress.value = 0;
+            errorMessage.value = '';
+          },
+          onPageFinished: (_) {
+            _pageReady = true;
+            progress.value = 1;
+            unawaited(saveCookie(silent: true));
+          },
+          onUrlChange: (_) {
+            if (_pageReady) {
+              unawaited(saveCookie(silent: true));
+            }
+          },
+          onWebResourceError: (error) {
+            if (error.isForMainFrame == true) {
+              progress.value = 1;
+              errorMessage.value = error.description;
+            }
+          },
+        ),
+      );
+    ohosWebViewController = controller;
+    controller.loadRequest(Uri.parse(_loginUrl));
+  }
+
+  void onWebViewCreated(InAppWebViewController controller) {
+    webViewController = controller;
+    controller.loadUrl(urlRequest: URLRequest(url: WebUri(_loginUrl)));
+  }
+
+  void onLoadStart(InAppWebViewController controller, Uri? uri) {
+    _pageReady = false;
+    progress.value = 0;
+    errorMessage.value = '';
+  }
+
+  void onProgressChanged(InAppWebViewController controller, int value) {
+    progress.value = value / 100;
+  }
+
+  void onLoadStop(InAppWebViewController controller, Uri? uri) {
+    _pageReady = true;
+    progress.value = 1;
+    unawaited(saveCookie(silent: true));
+    unawaited(_checkPageRendered());
+  }
+
+  void onReceivedError(
+    InAppWebViewController controller,
+    WebResourceRequest request,
+    WebResourceError error,
+  ) {
+    if (request.isForMainFrame == true) {
+      progress.value = 1;
+      errorMessage.value = error.description;
+    }
+  }
+
+  void onReceivedHttpError(
+    InAppWebViewController controller,
+    WebResourceRequest request,
+    WebResourceResponse response,
+  ) {
+    if (request.isForMainFrame == true) {
+      progress.value = 1;
+      errorMessage.value = 'HTTP ${response.statusCode ?? '-'}';
+    }
+  }
+
+  /// onLoadStop 后延迟检查页面是否渲染出可见内容，为空则提示降级到 Cookie 登录。
+  Future<void> _checkPageRendered() async {
+    await Future.delayed(const Duration(milliseconds: 1500));
+    if (isClosed || !_pageReady) {
+      return;
+    }
+    try {
+      final result = await webViewController?.evaluateJavascript(
+        source:
+            "(document.body ? document.body.innerText.trim().length : 0) > 0 ? '1' : '0'",
+      );
+      if (result?.toString() != '1' && errorMessage.value.isEmpty) {
+        errorMessage.value = '页面加载异常（可能被抖音拦截），请改用「Cookie 登录」';
+      }
+    } catch (_) {
+      // 页面已跳转或销毁时 evaluateJavascript 可能抛异常，忽略即可。
+    }
+  }
+
+  /// 从网页登录降级到「Cookie 登录」：返回账号页并弹出配置 Cookie 对话框。
+  void fallbackToCookieLogin() {
+    Get.back();
+    Get.find<AccountController>().doDouyinCookieConfig();
+  }
+
+  Future<void> reload() async {
+    errorMessage.value = '';
+    if (Utils.isOhos) {
+      await ohosWebViewController?.reload();
+    } else {
+      await webViewController?.reload();
+    }
+  }
+
+  Future<void> saveCookie({bool silent = false}) async {
+    if (checking.value) {
+      return;
+    }
+    checking.value = true;
+    try {
+      final cookie = await _readCookie();
+      if (cookie.isEmpty) {
+        if (!silent) {
+          SmartDialog.showToast('未读取到抖音 Cookie');
+        }
+        return;
+      }
+      if (!hasDouyinAuthenticatedSession(cookie)) {
+        if (!silent) {
+          SmartDialog.showToast('还没有检测到登录态，请先在页面中完成抖音登录');
+        }
+        return;
+      }
+      DouyinAccountService.instance.setCookie(cookie);
+      SmartDialog.showToast('抖音登录态已保存，可用于搜索');
+      Get.back();
+    } catch (e) {
+      Log.e('保存抖音 Cookie 失败：$e', StackTrace.current);
+      if (!silent) {
+        SmartDialog.showToast('保存失败：$e');
+      }
+    } finally {
+      checking.value = false;
+    }
+  }
+
+  Future<String> _readCookie() async {
+    final values = <String, String>{};
+    for (final url in const [
+      'https://www.douyin.com',
+      'https://douyin.com',
+      'https://live.douyin.com',
+    ]) {
+      if (Utils.isOhos) {
+        final cookie =
+            await _ohosWebCookieChannel.invokeMethod<String>('getCookie', {
+              'url': url,
+            }) ??
+            '';
+        _mergeCookieString(values, cookie);
+      } else {
+        final manager = cookieManager ??= CookieManager.instance();
+        final cookies = await manager.getCookies(url: WebUri(url));
+        for (final item in cookies) {
+          final name = item.name.trim();
+          final value = item.value.trim();
+          if (name.isNotEmpty && value.isNotEmpty) {
+            values[name] = value;
+          }
+        }
+      }
+    }
+    if (!Utils.isOhos) {
+      // `xmst` is the msToken used by Douyin's own web search requests. Keep
+      // it with the saved browser session so the native search request does
+      // not replace it with an unrelated random token.
+      final msToken = await _readLocalStorageValue('xmst');
+      if (msToken.isNotEmpty) {
+        values['msToken'] = msToken;
+      }
+      final webSessionId = await _readLocalStorageValue('s_v_web_id');
+      if (webSessionId.isNotEmpty) {
+        values.putIfAbsent('s_v_web_id', () => webSessionId);
+      }
+    }
+    return values.entries.map((e) => '${e.key}=${e.value}').join('; ');
+  }
+
+  Future<String> _readLocalStorageValue(String key) async {
+    final controller = webViewController;
+    if (controller == null) {
+      return '';
+    }
+    try {
+      final result = await controller.evaluateJavascript(
+        source: 'window.localStorage.getItem(${jsonEncode(key)}) || ""',
+      );
+      if (result == null) {
+        return '';
+      }
+      final text = result.toString().trim();
+      if (text.isEmpty || text == 'null') {
+        return '';
+      }
+      if (text.startsWith('"') && text.endsWith('"')) {
+        final decoded = jsonDecode(text);
+        return decoded is String ? decoded.trim() : '';
+      }
+      return text;
+    } catch (_) {
+      // Cookie extraction remains usable when localStorage is unavailable.
+      return '';
+    }
+  }
+
+  void _mergeCookieString(Map<String, String> values, String cookie) {
+    for (final part in cookie.split(';')) {
+      final item = part.trim();
+      final separator = item.indexOf('=');
+      if (separator <= 0) continue;
+      final name = item.substring(0, separator).trim();
+      final value = item.substring(separator + 1).trim();
+      if (name.isNotEmpty && value.isNotEmpty) {
+        values[name] = value;
+      }
+    }
+  }
+
+  String get userAgent =>
+      Platform.isIOS ? _desktopSafariUserAgent : _desktopChromeUserAgent;
+}
+
+bool hasDouyinAuthenticatedSession(String cookie) {
+  for (final part in cookie.split(';')) {
+    final item = part.trim();
+    final separator = item.indexOf('=');
+    if (separator <= 0) continue;
+    final name = item.substring(0, separator).trim().toLowerCase();
+    final value = item.substring(separator + 1).trim();
+    if (value.isEmpty) continue;
+    if (name == 'sessionid' ||
+        name == 'sid_guard' ||
+        name == 'sid_tt' ||
+        name == 'uid_tt' ||
+        (name == 'login_status' && value == '1')) {
+      return true;
+    }
+  }
+  return false;
+}

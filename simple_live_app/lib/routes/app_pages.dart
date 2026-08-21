@@ -1,26 +1,42 @@
 // ignore_for_file: prefer_inlined_adds
 
+import 'dart:io';
+
 import 'package:get/get.dart';
 import 'package:simple_live_app/modules/category/detail/category_detail_controller.dart';
 import 'package:simple_live_app/modules/category/detail/category_detail_page.dart';
 import 'package:simple_live_app/modules/indexed/indexed_controller.dart';
+import 'package:simple_live_app/modules/mine/about/about_page.dart';
+import 'package:simple_live_app/modules/mine/help/help_page.dart';
+import 'package:simple_live_app/modules/mine/help/support_tools_controller.dart';
+import 'package:simple_live_app/modules/mine/help/support_tools_page.dart';
+import 'package:simple_live_app/modules/mine/update/app_update_controller.dart';
+import 'package:simple_live_app/modules/mine/update/app_update_page.dart';
+import 'package:simple_live_app/modules/other/debug_log_page.dart';
 import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
 import 'package:simple_live_app/modules/live_room/live_room_page.dart';
+import 'package:simple_live_app/modules/multi_room/multi_room_controller.dart';
+import 'package:simple_live_app/modules/multi_room/multi_room_models.dart';
+import 'package:simple_live_app/modules/multi_room/multi_room_page.dart';
 import 'package:simple_live_app/modules/settings/follow_settings_page.dart';
+import 'package:simple_live_app/modules/sync/profile_backup/profile_backup_controller.dart';
+import 'package:simple_live_app/modules/sync/profile_backup/profile_backup_page.dart';
 import 'package:simple_live_app/modules/sync/remote_sync/webdav/remote_sync_webdav_config_page.dart';
 import 'package:simple_live_app/modules/sync/remote_sync/webdav/remote_sync_webdav_controller.dart';
 import 'package:simple_live_app/modules/sync/remote_sync/webdav/remote_sync_webdav_page.dart';
 import 'package:simple_live_app/modules/sync/sync_page.dart';
+import 'package:simple_live_app/modules/sync/advanced_connection/advanced_connection_controller.dart';
+import 'package:simple_live_app/modules/sync/advanced_connection/advanced_connection_page.dart';
 import 'package:simple_live_app/modules/sync/remote_sync/room/remote_sync_room_controller.dart';
 import 'package:simple_live_app/modules/sync/remote_sync/room/remote_sync_room_page.dart';
-import 'package:simple_live_app/modules/search/search_controller.dart';
+import 'package:simple_live_app/modules/search/search_aggregate_controller.dart';
 import 'package:simple_live_app/modules/search/search_page.dart';
+import 'package:simple_live_app/modules/search/search_list_controller.dart';
+import 'package:simple_live_app/modules/search/search_site_page.dart';
 import 'package:simple_live_app/modules/sync/local_sync/device/sync_device_controller.dart';
 import 'package:simple_live_app/modules/sync/local_sync/device/sync_device_page.dart';
 import 'package:simple_live_app/modules/sync/local_sync/scan_qr/sync_scan_qr_controller.dart';
 import 'package:simple_live_app/modules/sync/local_sync/scan_qr/sync_scan_qr_page.dart';
-import 'package:simple_live_app/modules/mine/parse/parse_controller.dart';
-import 'package:simple_live_app/modules/mine/parse/parse_page.dart';
 import 'package:simple_live_app/modules/sync/local_sync/local_sync_controller.dart';
 import 'package:simple_live_app/modules/sync/local_sync/local_sync_page.dart';
 import 'package:simple_live_app/modules/mine/account/account_controller.dart';
@@ -29,6 +45,11 @@ import 'package:simple_live_app/modules/mine/account/bilibili/qr_login_controlle
 import 'package:simple_live_app/modules/mine/account/bilibili/qr_login_page.dart';
 import 'package:simple_live_app/modules/mine/account/bilibili/web_login_controller.dart';
 import 'package:simple_live_app/modules/mine/account/bilibili/web_login_page.dart';
+import 'package:simple_live_app/modules/mine/account/douyin/web_login_controller.dart';
+import 'package:simple_live_app/modules/mine/account/douyin/web_login_page.dart';
+import 'package:simple_live_app/modules/mine/account/kuaishou/web_login_controller.dart';
+import 'package:simple_live_app/modules/mine/account/kuaishou/web_login_page.dart';
+import 'package:simple_live_app/modules/mine/account/kuaishou/account_page.dart';
 import 'package:simple_live_app/modules/settings/appstyle_setting_page.dart';
 import 'package:simple_live_app/modules/settings/auto_exit_settings_page.dart';
 import 'package:simple_live_app/modules/settings/danmu_settings_page.dart';
@@ -42,9 +63,13 @@ import 'package:simple_live_app/modules/settings/indexed_settings/indexed_settin
 import 'package:simple_live_app/modules/settings/indexed_settings/indexed_settings_page.dart';
 import 'package:simple_live_app/modules/settings/other/other_settings_controller.dart';
 import 'package:simple_live_app/modules/settings/other/other_settings_page.dart';
+import 'package:simple_live_app/modules/settings/multi_room_settings_page.dart';
+import 'package:simple_live_app/modules/settings/playback_page_settings_page.dart';
 import 'package:simple_live_app/modules/settings/play_settings_page.dart';
+import 'package:simple_live_app/modules/settings/settings_page.dart';
 
 import '../modules/indexed/indexed_page.dart';
+import 'app_navigation.dart';
 import 'route_path.dart';
 
 class AppPages {
@@ -59,12 +84,50 @@ class AppPages {
         //BindingsBuilder.put(() => HomeController()),
       ],
     ),
+    // 关于
+    GetPage(
+      name: RoutePath.kAbout,
+      page: () => const AboutPage(),
+    ),
+    GetPage(
+      name: RoutePath.kAppUpdate,
+      page: () => const AppUpdatePage(),
+      binding: BindingsBuilder.put(() => AppUpdateController()),
+    ),
+    // 设置总览
+    GetPage(
+      name: RoutePath.kSettings,
+      page: () => const SettingsPage(),
+    ),
+    // 帮助与排障
+    GetPage(
+      name: RoutePath.kHelp,
+      page: () => const HelpPage(),
+    ),
+    // 当前运行日志
+    GetPage(
+      name: RoutePath.kDebugLog,
+      page: () => const DebugLogPage(),
+    ),
+    // 持久日志与配置恢复
+    GetPage(
+      name: RoutePath.kSupportTools,
+      page: () => const SupportToolsPage(),
+      binding: BindingsBuilder.put(() => SupportToolsController()),
+    ),
     // 观看记录
     GetPage(
       name: RoutePath.kHistory,
       page: () => const HistoryPage(),
       bindings: [
-        BindingsBuilder.put(() => HistoryController()),
+        BindingsBuilder.put(() {
+          final args = Get.arguments;
+          return HistoryController(
+            onRoomSelected: args is Map<String, dynamic>
+                ? args["onRoomSelected"] as RoomSelectionCallback?
+                : null,
+          );
+        }),
       ],
     ),
     // 关注用户
@@ -80,29 +143,83 @@ class AppPages {
       name: RoutePath.kSearch,
       page: () => const SearchPage(),
       bindings: [
-        BindingsBuilder.put(() => AppSearchController()),
+        BindingsBuilder.put(() => SearchAggregateController()),
       ],
+    ),
+    // 单站搜索：使用路由 scope，避免依赖全局 site tag。
+    GetPage(
+      name: RoutePath.kSearchSite,
+      page: () => SearchSitePage(
+        args: SearchSiteRouteArgs.from(Get.arguments),
+      ),
+      binding: BindingsBuilder(() {
+        final args = SearchSiteRouteArgs.from(Get.arguments);
+        Get.put(
+          SearchListController(
+            args.site,
+            keyword: args.keyword,
+            mode: args.searchMode,
+          ),
+          tag: args.scopeId,
+        );
+      }),
     ),
     //分类详情
     GetPage(
       name: RoutePath.kCategoryDetail,
       page: () => const CategoryDetailPage(),
-      binding: BindingsBuilder.put(
-        () => CategoryDetailController(
-          site: Get.arguments[0],
-          subCategory: Get.arguments[1],
-        ),
-      ),
+      binding: BindingsBuilder.put(() {
+        final args = Get.arguments;
+        if (args is Map<String, dynamic>) {
+          return CategoryDetailController(
+            site: args["site"],
+            subCategory: args["category"],
+            onRoomSelected: args["onRoomSelected"] as RoomSelectionCallback?,
+            excludedRoomId: args["excludedRoomId"] as String?,
+          );
+        }
+        return CategoryDetailController(
+          site: args[0],
+          subCategory: args[1],
+        );
+      }),
     ),
     //直播间
     GetPage(
       name: RoutePath.kLiveRoomDetail,
       page: () => const LiveRoomPage(),
-      binding: BindingsBuilder.put(
-        () => LiveRoomController(
-          pSite: Get.arguments,
+      transition: Platform.isIOS ? Transition.cupertino : null,
+      popGesture: Platform.isIOS,
+      binding: BindingsBuilder.put(() {
+        final args = Get.arguments;
+        final site = args is Map<String, dynamic> ? args["site"] : args;
+        final initialCollapsed = args is Map<String, dynamic> &&
+            args["initialDesktopSidePanelCollapsed"] == true;
+        return LiveRoomController(
+          pSite: site,
           pRoomId: Get.parameters["roomId"] ?? "",
-        ),
+          initialDesktopSidePanelCollapsed: initialCollapsed,
+        );
+      }),
+    ),
+    // 多开同屏
+    GetPage(
+      name: RoutePath.kMultiRoom,
+      page: () => const MultiRoomPage(),
+      binding: BindingsBuilder.put(
+        () {
+          final args = Get.arguments;
+          if (args is MultiRoomLaunchArgs) {
+            return MultiRoomController(
+              args.rooms,
+              returnToLiveRoom: args.returnToLiveRoom,
+            );
+          }
+          return MultiRoomController(
+            (args as List?)?.whereType<MultiRoomItem>().toList() ??
+                const <MultiRoomItem>[],
+          );
+        },
       ),
     ),
     //弹幕设置
@@ -119,18 +236,15 @@ class AppPages {
       name: RoutePath.kSettingsPlay,
       page: () => const PlaySettingsPage(),
     ),
+    //多开设置
+    GetPage(
+      name: RoutePath.kSettingsMultiRoom,
+      page: () => const MultiRoomSettingsPage(),
+    ),
     //自动关闭
     GetPage(
       name: RoutePath.kSettingsAutoExit,
       page: () => const AutoExitSettingsPage(),
-    ),
-    //工具箱
-    GetPage(
-      name: RoutePath.kTools,
-      page: () => const ParsePage(),
-      bindings: [
-        BindingsBuilder.put(() => ParseController()),
-      ],
     ),
     //关键词屏蔽
     GetPage(
@@ -144,6 +258,14 @@ class AppPages {
     GetPage(
       name: RoutePath.kSettingsIndexed,
       page: () => const IndexedSettingsPage(),
+      bindings: [
+        BindingsBuilder.put(() => IndexedSettingsController()),
+      ],
+    ),
+    //播放页设置
+    GetPage(
+      name: RoutePath.kSettingsPlaybackPage,
+      page: () => const PlaybackPageSettingsPage(),
       bindings: [
         BindingsBuilder.put(() => IndexedSettingsController()),
       ],
@@ -172,10 +294,44 @@ class AppPages {
         BindingsBuilder.put(() => BiliBiliQRLoginController()),
       ],
     ),
+    //抖音Web登录
+    GetPage(
+      name: RoutePath.kDouyinWebLogin,
+      page: () => const DouyinWebLoginPage(),
+      bindings: [
+        BindingsBuilder.put(() => DouyinWebLoginController()),
+      ],
+    ),
+    //快手Web登录
+    GetPage(
+      name: RoutePath.kKuaishouWebLogin,
+      page: () => const KuaishouWebLoginPage(),
+      bindings: [
+        BindingsBuilder.put(() => KuaishouWebLoginController()),
+      ],
+    ),
+    //快手账号管理
+    GetPage(
+      name: RoutePath.kKuaishouAccount,
+      page: () => const KuaishouAccountPage(),
+    ),
     // 数据同步
     GetPage(
       name: RoutePath.kSync,
       page: () => const SyncPage(),
+    ),
+    GetPage(
+      name: RoutePath.kProfileBackup,
+      page: () => const ProfileBackupPage(),
+      bindings: [
+        BindingsBuilder.put(() => ProfileBackupController()),
+      ],
+    ),
+    // 同步高级连接设置
+    GetPage(
+      name: RoutePath.kSyncAdvancedConnection,
+      page: () => const AdvancedConnectionPage(),
+      binding: BindingsBuilder.put(() => AdvancedConnectionController()),
     ),
     // 本地同步
     GetPage(
@@ -226,7 +382,7 @@ class AppPages {
       page: () => const RemoteSyncWebDAVPage(),
       bindings: [
         BindingsBuilder.put(
-              () => RemoteSyncWebDAVController(),
+          () => RemoteSyncWebDAVController(),
         ),
       ],
     ),
@@ -235,7 +391,7 @@ class AppPages {
       name: RoutePath.kRemoteSyncWebDavConfig,
       page: () => const RemoteSyncWebDAVConfigPage(),
     ),
-    //其他设置
+    //高级设置
     GetPage(
       name: RoutePath.kSettingsOther,
       page: () => const OtherSettingsPage(),

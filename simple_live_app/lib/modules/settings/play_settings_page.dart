@@ -1,9 +1,12 @@
 import 'dart:io';
 
+import 'package:floating/floating.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
+import 'package:simple_live_app/app/utils.dart';
+import 'package:simple_live_app/services/ohos_pip_service.dart';
 import 'package:simple_live_app/widgets/settings/settings_card.dart';
 import 'package:simple_live_app/widgets/settings/settings_menu.dart';
 import 'package:simple_live_app/widgets/settings/settings_number.dart';
@@ -19,7 +22,7 @@ class PlaySettingsPage extends GetView<AppSettingsController> {
         title: const Text("直播间设置"),
       ),
       body: ListView(
-        padding: AppStyle.edgeInsetsA12,
+        padding: AppStyle.pagePadding(),
         children: [
           Padding(
             padding: AppStyle.edgeInsetsA12.copyWith(top: 0),
@@ -32,16 +35,27 @@ class PlaySettingsPage extends GetView<AppSettingsController> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Obx(
-                  () => SettingsSwitch(
-                    title: "硬件解码",
-                    value: controller.hardwareDecode.value,
-                    subtitle: "播放失败可尝试关闭此选项",
-                    onChanged: (e) {
-                      controller.setHardwareDecode(e);
-                    },
+                if (!Utils.isOhos)
+                  Obx(
+                    () => SettingsSwitch(
+                      title: "硬件解码",
+                      value: controller.hardwareDecode.value,
+                      subtitle: "播放失败可尝试关闭此选项",
+                      onChanged: (e) {
+                        controller.setHardwareDecode(e);
+                      },
+                    ),
                   ),
-                ),
+                if (Platform.isIOS) AppStyle.divider,
+                if (Platform.isIOS)
+                  Obx(
+                    () => SettingsSwitch(
+                      title: "原画省电优化",
+                      subtitle: "限制渲染纹理不超过屏幕实际像素，不降低直播源清晰度；异常时可关闭",
+                      value: controller.iosOriginalQualityPowerSaving.value,
+                      onChanged: controller.setIosOriginalQualityPowerSaving,
+                    ),
+                  ),
                 if (Platform.isAndroid) AppStyle.divider,
                 Obx(
                   () => Visibility(
@@ -71,17 +85,7 @@ class PlaySettingsPage extends GetView<AppSettingsController> {
                 //     },
                 //   ),
                 // ),
-                AppStyle.divider,
-                Obx(
-                  () => SettingsSwitch(
-                    title: "进入后台自动暂停",
-                    value: controller.playerAutoPause.value,
-                    onChanged: (e) {
-                      controller.setPlayerAutoPause(e);
-                    },
-                  ),
-                ),
-                AppStyle.divider,
+                if (!Utils.isOhos) AppStyle.divider,
                 Obx(
                   () => SettingsMenu<int>(
                     title: "画面尺寸",
@@ -109,6 +113,48 @@ class PlaySettingsPage extends GetView<AppSettingsController> {
                     },
                   ),
                 ),
+                AppStyle.divider,
+                Obx(
+                  () => SettingsSwitch(
+                    title: "滑动调节音量/亮度",
+                    subtitle: "播放页左右两侧上下滑动调节亮度和音量",
+                    value: controller.playerGestureControlEnable.value,
+                    onChanged: (e) {
+                      controller.setPlayerGestureControlEnable(e);
+                    },
+                  ),
+                ),
+                AppStyle.divider,
+                Obx(
+                  () => SettingsSwitch(
+                    title: "允许后台继续播放",
+                    subtitle: "移动端仍可能被系统省电策略关闭，返回前台时会尽量自动恢复",
+                    value: controller.allowBackgroundPlayback.value,
+                    onChanged: (e) {
+                      controller.setAllowBackgroundPlayback(e);
+                    },
+                  ),
+                ),
+                if (Utils.isOhos) ...[
+                  AppStyle.divider,
+                  Obx(
+                    () => SettingsSwitch(
+                      title: "网络波动时自动降低清晰度",
+                      subtitle: "仅在多次独立缓冲后降一档，切换房间后重新判断",
+                      value: controller.ohosAutoQualityDegrade.value,
+                      onChanged: controller.setOhosAutoQualityDegrade,
+                    ),
+                  ),
+                  AppStyle.divider,
+                  Obx(
+                    () => SettingsSwitch(
+                      title: "网络波动提示",
+                      subtitle: "持续缓冲时检测当前播放端点并显示结果",
+                      value: controller.ohosNetworkFluctuationNotice.value,
+                      onChanged: controller.setOhosNetworkFluctuationNotice,
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -134,18 +180,27 @@ class PlaySettingsPage extends GetView<AppSettingsController> {
                 ),
                 AppStyle.divider,
                 Obx(
-                  () => Visibility(
-                    visible: Platform.isAndroid,
-                    child: SettingsSwitch(
-                      title: "进入小窗隐藏弹幕",
-                      value: controller.pipHideDanmu.value,
-                      onChanged: (e) {
-                        controller.setPIPHideDanmu(e);
-                      },
-                    ),
+                  () => SettingsSwitch(
+                    title: "关播后自动换下一个直播间",
+                    subtitle: "当前房间确认已下播后，自动切到关注列表里下一个正在直播的房间",
+                    value: controller.autoSwitchNextOnLiveEnd.value,
+                    onChanged: (e) {
+                      controller.setAutoSwitchNextOnLiveEnd(e);
+                    },
                   ),
                 ),
                 AppStyle.divider,
+                Obx(
+                  () => SettingsSwitch(
+                    title: "播放失败后自动换下一个直播间",
+                    subtitle: "当前房间重试和线路切换都失败后，自动切到下一个正在直播的房间",
+                    value: controller.autoSwitchNextOnPlaybackFailure.value,
+                    onChanged: (e) {
+                      controller.setAutoSwitchNextOnPlaybackFailure(e);
+                    },
+                  ),
+                ),
+                _PipSettingsSection(controller: controller),
                 Obx(
                   () => SettingsSwitch(
                     title: "播放器中显示SC",
@@ -153,6 +208,15 @@ class PlaySettingsPage extends GetView<AppSettingsController> {
                     onChanged: (e) {
                       controller.setPlayerShowSuperChat(e);
                     },
+                  ),
+                ),
+                AppStyle.divider,
+                Obx(
+                  () => SettingsSwitch(
+                    title: "显示“复制播放直链”",
+                    subtitle: "开启后在直播间更多功能中显示；复制当前实际清晰度和线路",
+                    value: controller.playerShowPlayUrl.value,
+                    onChanged: controller.setPlayerShowPlayUrl,
                   ),
                 ),
               ],
@@ -249,6 +313,72 @@ class PlaySettingsPage extends GetView<AppSettingsController> {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _PipSettingsSection extends StatefulWidget {
+  const _PipSettingsSection({required this.controller});
+
+  final AppSettingsController controller;
+
+  @override
+  State<_PipSettingsSection> createState() => _PipSettingsSectionState();
+}
+
+class _PipSettingsSectionState extends State<_PipSettingsSection> {
+  late final Future<PipCapabilities> _capabilities = _loadCapabilities();
+
+  Future<PipCapabilities> _loadCapabilities() async {
+    if (Platform.isAndroid) {
+      try {
+        return await Floating().isPipAvailable
+            ? PipCapabilities.supported
+            : PipCapabilities.unsupported;
+      } catch (_) {
+        return PipCapabilities.unsupported;
+      }
+    }
+    if (Utils.isOhos) {
+      return OhosPipService.instance.getCapabilities(refresh: true);
+    }
+    return PipCapabilities.unsupported;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<PipCapabilities>(
+      future: _capabilities,
+      builder: (context, snapshot) {
+        final capabilities = snapshot.data ?? PipCapabilities.unsupported;
+        final showHideDanmaku = capabilities.pipCanHideDanmaku;
+        final showAutoOnLeave = capabilities.pipAutoOnLeaveSupported;
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AppStyle.divider,
+            if (showHideDanmaku)
+              Obx(
+                () => SettingsSwitch(
+                  title: "进入小窗隐藏弹幕",
+                  value: widget.controller.pipHideDanmu.value,
+                  onChanged: widget.controller.setPIPHideDanmu,
+                ),
+              ),
+            if (showHideDanmaku && showAutoOnLeave) AppStyle.divider,
+            if (showAutoOnLeave)
+              Obx(
+                () => SettingsSwitch(
+                  title: "退出时自动小窗",
+                  subtitle: "按 Home 键或系统手势退到后台时进入小窗；应用内返回仍回到主页",
+                  value: widget.controller.autoPipOnExit.value,
+                  onChanged: widget.controller.setAutoPipOnExit,
+                ),
+              ),
+            if (showHideDanmaku || showAutoOnLeave) AppStyle.divider,
+          ],
+        );
+      },
     );
   }
 }

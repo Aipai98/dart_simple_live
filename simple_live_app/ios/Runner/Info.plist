@@ -26,11 +26,17 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>snssdk1128</string>
+	</array>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>用于在同一局域网内发现并连接其他 Simple Live 设备进行数据同步</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>
@@ -51,6 +57,8 @@
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
+	<true/>
+	<key>FLTEnableImpeller</key>
 	<false/>
 	<key>UIBackgroundModes</key>
 	<array>
@@ -58,29 +66,13 @@
 	</array>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>保存图片至相册</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>保存直播截图至相册</string>
 	<key>UISupportsDocumentBrowser</key>
 	<true/>
 	<key>io.flutter.embedded_views_preview</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>用于扫描二维码</string>
-	<key>UIApplicationSceneManifest</key>
-	<dict>
-		<key>UIApplicationSupportsMultipleScenes</key>
-		<false/>
-		<key>UISceneConfigurations</key>
-		<dict>
-			<key>UIWindowSceneSessionRoleApplication</key>
-			<array>
-				<dict>
-					<key>UISceneClassName</key><string>UIWindowScene</string>
-					<key>UISceneDelegateClassName</key><string>FlutterSceneDelegate</string>
-					<key>UISceneConfigurationName</key><string>flutter</string>
-					<key>UISceneStoryboardFile</key><string>Main</string>
-				</dict>
-			</array>
-		</dict>
-	</dict>
-
 </dict>
 </plist>

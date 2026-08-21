@@ -5,27 +5,74 @@ import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
 import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
+import 'package:simple_live_app/app/platform_utils.dart';
 import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/models/sync_client_info_model.dart';
+import 'package:simple_live_app/modules/multi_room/multi_room_models.dart';
+import 'package:simple_live_app/routes/account_route_target.dart';
 import 'package:simple_live_app/routes/route_path.dart';
 import 'package:simple_live_app/services/bilibili_account_service.dart';
 import 'package:simple_live_app/services/sync_service.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 
+typedef RoomSelectionCallback = void Function(Site site, String roomId);
+
 /// APP页面跳转封装
 /// * 需要参数的页面都应使用此类
 /// * 如不需要参数，可以使用Get.toNamed
 class AppNavigator {
+  static final Map<String, DateTime> _lastLiveRoomOpenAt = {};
+
+  /// 跳转至观看记录
+  static Future<dynamic> toHistory({
+    RoomSelectionCallback? onRoomSelected,
+  }) {
+    return Get.toNamed(
+          RoutePath.kHistory,
+          arguments: onRoomSelected == null
+              ? null
+              : {
+                  "onRoomSelected": onRoomSelected,
+                },
+        ) ??
+        Future.value();
+  }
+
   /// 跳转至分类详情
   static void toCategoryDetail(
-      {required Site site, required LiveSubCategory category}) {
-    Get.toNamed(RoutePath.kCategoryDetail, arguments: [site, category]);
+      {required Site site,
+      required LiveSubCategory category,
+      RoomSelectionCallback? onRoomSelected,
+      String? excludedRoomId}) {
+    Get.toNamed(
+      RoutePath.kCategoryDetail,
+      arguments: {
+        "site": site,
+        "category": category,
+        if (onRoomSelected != null) "onRoomSelected": onRoomSelected,
+        if (excludedRoomId != null) "excludedRoomId": excludedRoomId,
+      },
+    );
   }
 
   /// 跳转至直播间
-  static void toLiveRoomDetail(
-      {required Site site, required String roomId}) async {
+  static Future<dynamic> toLiveRoomDetail({
+    required Site site,
+    required String roomId,
+    bool initialDesktopSidePanelCollapsed = false,
+    bool replace = false,
+  }) async {
+    final roomKey = "${site.id}_$roomId";
+    final lastOpenAt = _lastLiveRoomOpenAt[roomKey];
+    final now = DateTime.now();
+    if (lastOpenAt != null &&
+        now.difference(lastOpenAt) < const Duration(milliseconds: 1500)) {
+      SmartDialog.showToast("正在打开直播间，请稍候");
+      return Future.value();
+    }
+    _lastLiveRoomOpenAt[roomKey] = now;
+
     if (site.id == Constant.kBiliBili &&
         !BiliBiliAccountService.instance.logined.value &&
         AppSettingsController.instance.bilibiliLoginTip.value) {
@@ -50,18 +97,65 @@ class AppNavigator {
       }
     }
 
-    Get.toNamed(RoutePath.kLiveRoomDetail, arguments: site, parameters: {
-      "roomId": roomId,
-    });
+    final arguments = {
+      "site": site,
+      "initialDesktopSidePanelCollapsed": initialDesktopSidePanelCollapsed,
+    };
+    final parameters = {"roomId": roomId};
+    return (replace
+            ? Get.offNamed(
+                RoutePath.kLiveRoomDetail,
+                arguments: arguments,
+                parameters: parameters,
+              )
+            : Get.toNamed(
+                RoutePath.kLiveRoomDetail,
+                arguments: arguments,
+                parameters: parameters,
+              )) ??
+        Future.value();
+  }
+
+  static Future<dynamic> toMultiRoom(
+    List<MultiRoomItem> rooms, {
+    bool returnToLiveRoom = false,
+  }) {
+    final unavailableReason = PlatformUtils.inlineMultiRoomUnavailableReason;
+    if (unavailableReason != null) {
+      SmartDialog.showToast(unavailableReason);
+      return Future.value();
+    }
+    if (PlatformUtils.isMobileApp &&
+        rooms.length > PlatformUtils.mobileMultiRoomMax) {
+      SmartDialog.showToast("移动端最多支持4个直播间");
+      return Future.value();
+    }
+    return Get.toNamed(
+          RoutePath.kMultiRoom,
+          arguments: MultiRoomLaunchArgs(
+            rooms: rooms,
+            returnToLiveRoom: returnToLiveRoom,
+          ),
+        ) ??
+        Future.value();
   }
 
   /// 跳转至哔哩哔哩登录
   static Future toBiliBiliLogin() async {
-    if (Platform.isAndroid || Platform.isIOS) {
+    if (Platform.isAndroid || Platform.isIOS || Utils.isOhos) {
       await Get.toNamed(RoutePath.kBiliBiliWebLogin);
     } else {
       await Get.toNamed(RoutePath.kBiliBiliQRLogin);
     }
+  }
+
+  /// 打开账号管理，并在页面就绪后直接展示抖音 Cookie 配置。
+  static Future<dynamic> toDouyinCookieConfig() {
+    return Get.toNamed(
+          RoutePath.kSettingsAccount,
+          arguments: AccountRouteTarget.douyinCookieConfig,
+        ) ??
+        Future.value();
   }
 
   /// 跳转至同步设备

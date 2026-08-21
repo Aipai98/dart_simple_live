@@ -1,5 +1,5 @@
 name: simple_live_app
-version: 1.11.4+11104
+version: 1.13.3+11303
 publish_to: none
 description: "Simple Live APP"
 environment:
@@ -8,6 +8,8 @@ environment:
 dependencies:
   simple_live_core:
     path: ../simple_live_core
+  dart_quickjs:
+    path: ../third_party/dart_quickjs_compat
   # 图标
   cupertino_icons: ^1.0.8
   remixicon: ^1.4.1 #Remix图标
@@ -18,24 +20,24 @@ dependencies:
   hive: 2.2.3 #持久化存储
   hive_flutter: 1.1.0 #持久化存储
   logger: ^2.6.2 #日志
-  intl: ^0.20.2 #国际化
+  intl: 0.20.2 # Flutter 3.41 SDK pin（flutter_localizations 要求 ^0.20.2）
   qr_flutter: ^4.1.0 #二维码生成
-  dynamic_color: ^1.8.1 #动态颜色
+  dynamic_color: 1.6.8
   path: any
   collection: any
   udp: ^5.0.3 #UDP
   uuid: ^4.5.2 #UUID
   webdav_client: ^1.2.2 # WebDAV
-  archive: ^4.0.7 #文件压缩
+  archive: 3.6.1
   crypto: ^3.0.7
 
   #Widget
   flutter_staggered_grid_view: ^0.7.0 #瀑布流/GridView
   flutter_easyrefresh: 2.2.2 #下拉刷新、上拉加载
-  extended_image: ^10.0.1 #拓展Image,支持缓存
+  extended_image: 9.1.0 # Dart 3.4 compatible
   flutter_smart_dialog: ^4.9.8+9 #各种弹窗 Toast/Dialog/Popup
   sticky_headers: ^0.3.0+2 #吸顶
-  lottie: ^3.3.2 #lottie动画
+  lottie: 3.1.3
   canvas_danmaku: ^0.2.7
   # ns_danmaku: #弹幕
   #   git:
@@ -43,42 +45,65 @@ dependencies:
   #     tag: v0.0.9
 
   #系统交互
-  package_info_plus: ^9.0.0 #包信息
-  device_info_plus: ^12.2.0 #设备信息
-  url_launcher: ^6.3.2 #打开链接
-  share_plus: ^12.0.1 #分享
-  path_provider: ^2.1.5 #常用路径
-  cross_file: ^0.3.5 #跨平台文件
-  permission_handler: ^12.0.1 #权限处理
-  image_gallery_saver_plus: ^4.0.1 #图片保存到相册
-  screen_brightness: ^2.1.7 #亮度控制
-  auto_orientation_v2: ^2.3.6 #屏幕方向
-  wakelock_plus: ^1.4.0 #屏幕常亮
-  file_picker: ^10.3.7 #文件选择
-  window_manager: ^0.5.1 #窗口管理
+  package_info_plus: 8.3.1
+  device_info_plus: 9.1.2 # OpenHarmony-SIG adapter baseline
+  url_launcher: 6.3.0 # Dart 3.4 compatible
+  url_launcher_ohos:
+    path: third_party/url_launcher_ohos
+  share_plus: 7.2.2 # Dart 3.4 compatible
+  path_provider: any
+  cross_file: 0.3.4+2 # Dart 3.4 compatible
+  permission_handler: 11.3.1 # Dart 3.4 compatible
+  image_gallery_saver_plus: 5.1.1 # Flutter 3.41 compatible（3.0.5 的 v1 Registrar 已被 3.41 移除）
+  screen_brightness:
+    path: third_party/screen_brightness
+  screen_brightness_ohos:
+    path: third_party/screen_brightness_ohos
+  # 2.4.4 的插件元数据会让 Flutter 3.41 在非移动平台生成无效注册，
+  # Android 注册类也与包内实现不一致；固定到已通过全平台 Release 的版本。
+  auto_orientation_v2: 2.3.8 #屏幕方向
+  wakelock_plus: 1.2.10 # Dart 3.4 compatible; OHOS calls are guarded. 1.3.0 改用
+  # SPM 目录布局(ios/wakelock_plus/Sources/.../include)，1.2.10 是最后一个传统 ios/Classes 布局。
+  file_picker:
+    path: third_party/file_picker_ohos_compat
+  window_manager: 0.4.3
+  screen_retriever: ^0.2.0 #屏幕范围
   floating: ^6.0.0 #PIP画中画
-  flutter_inappwebview: ^6.1.5 #WebView
-  connectivity_plus: ^7.0.0 #网络状态
+  flutter_inappwebview: 6.0.0 # Dart 3.4 compatible
+  webview_flutter:
+    git:
+      url: https://github.com/xuanxuan123xuan/flutter_packages.git
+      ref: fd410050c6842717ee1b851ca7640c294de9568c
+      path: packages/webview_flutter/webview_flutter
+  connectivity_plus: 5.0.2 # OpenHarmony-SIG adapter baseline
   qr_code_scanner_plus: ^2.0.14 #二维码扫描
   volume_controller: ^3.4.0 #音量控制
 
   # 网络相关
-  shelf: ^1.4.2
+  shelf: 1.4.1
   shelf_router: ^1.1.4
-  network_info_plus: ^7.0.0
-  signalr_netcore: ^1.4.4 #SignalR
+  # 7.x requires AGP 8.12.1/Gradle 8.13；当前用 AGP 8.9.1/Gradle 8.12，故钉 6.x。
+  network_info_plus: 6.1.4
+  web_socket_channel: ^3.0.1 #远程同步WebSocket
 
   # 视频播放
   media_kit: ^1.2.2
-  media_kit_video: ^2.0.0
+  media_kit_video:
+    path: third_party/media_kit_video
   media_kit_libs_video: ^1.0.7
+  video_player:
+    git:
+      url: https://github.com/xuanxuan123xuan/flutter_packages.git
+      ref: fd410050c6842717ee1b851ca7640c294de9568c
+      path: packages/video_player/video_player
+  video_player_ohos:
+    path: third_party/video_player_ohos
 
   flutter:
     sdk: flutter
   flutter_localizations:
     sdk: flutter
-
-
+  flutter_markdown: ^0.7.7+1
 dev_dependencies:
   flutter_lints: ^2.0.0
   build_runner: ^2.3.3
@@ -86,6 +111,63 @@ dev_dependencies:
   flutter_launcher_icons: ^0.13.1
   flutter_test:
     sdk: flutter
+
+dependency_overrides:
+  # core 声明 git 源 dart_quickjs（纯 Dart，可解析/测试）；
+  # app 侧统一覆盖为本地 compat（鸿蒙 OHOS 3.22 工具链不能消费
+  # git 源的 Dart 3.10 Native Assets），避免"同一包双源"冲突。
+  dart_quickjs:
+    path: ../third_party/dart_quickjs_compat
+  canvas_danmaku:
+    path: ../third_party/canvas_danmaku
+  # 本地 fork：原包缺 androidx.core 依赖，Android 构建 toUri 无法解析。
+  screen_brightness_android:
+    path: third_party/screen_brightness_android
+  # 本地 fork：原插件 release 自跑 R8 导致 androidx.webkit 引用的
+  # android.window.BackEvent（API 33）Missing class，改 minifyEnabled false。
+  flutter_inappwebview_android:
+    path: third_party/flutter_inappwebview_android
+  # 本地 fork：删除 v1 插件 API（PluginRegistry.Registrar，Flutter 3.41 已移除）。
+  webview_flutter_android:
+    path: third_party/webview_flutter_android
+  # 本地 fork：compileSdk 31 提升到 34（低于 33 时 R8 可能缺 API 33 类）。
+  dynamic_color:
+    path: third_party/dynamic_color
+  # volume_controller >= 3.4.2 与 screen_brightness_ios >= 2.1.3 使用
+  # FlutterSceneLifeCycleDelegate / addSceneDelegate / registrar.viewController，
+  # 这些 Scene Lifecycle API 需 Flutter 3.35+；本分支（dev）已是 3.41，
+  # 可升到最新，暂保持 3.4.1 / 2.1.2 避免多余改动。
+  volume_controller: 3.4.1
+  screen_brightness_ios: 2.1.2
+  path_provider:
+    git:
+      url: https://github.com/xuanxuan123xuan/flutter_packages.git
+      ref: fd410050c6842717ee1b851ca7640c294de9568c
+      path: packages/path_provider/path_provider
+  # CPF-Flutter 的 path_provider 内部 git 依赖 path_provider_ohos 指向
+  # gitcode openharmony-tpc（CI clone 网络不稳）——override 到 GitHub 镜像。
+  path_provider_ohos:
+    git:
+      url: https://github.com/xuanxuan123xuan/flutter_packages.git
+      ref: fd410050c6842717ee1b851ca7640c294de9568c
+      path: packages/path_provider/path_provider_ohos
+  video_player_ohos:
+    path: third_party/video_player_ohos
+  webview_flutter_ohos:
+    git:
+      url: https://github.com/xuanxuan123xuan/flutter_packages.git
+      ref: fd410050c6842717ee1b851ca7640c294de9568c
+      path: packages/webview_flutter/webview_flutter_ohos
+  webview_flutter_platform_interface:
+    git:
+      url: https://github.com/xuanxuan123xuan/flutter_packages.git
+      ref: fd410050c6842717ee1b851ca7640c294de9568c
+      path: packages/webview_flutter/webview_flutter_platform_interface
+  webview_flutter_wkwebview:
+    git:
+      url: https://github.com/xuanxuan123xuan/flutter_packages.git
+      ref: fd410050c6842717ee1b851ca7640c294de9568c
+      path: packages/webview_flutter/webview_flutter_wkwebview
 
 flutter_launcher_icons:
   android: true
@@ -100,5 +182,6 @@ flutter:
   assets:
     - assets/statement.txt
     - assets/images/
+    - assets/images/douyin_emoji/
     - assets/icons/
     - assets/lotties/

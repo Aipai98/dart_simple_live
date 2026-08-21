@@ -5,185 +5,171 @@ import 'package:simple_live_app/app/log.dart';
 class LocalStorageService extends GetxService {
   static LocalStorageService get instance => Get.find<LocalStorageService>();
 
-  /// 首次运行
   static const String kFirstRun = "FirstRun";
-
-  /// 缩放模式
   static const String kPlayerScaleMode = "ScaleMode";
-
-  /// 网站排序
   static const String kSiteSort = "SiteSort";
-
-  /// 首页排序
   static const String kHomeSort = "HomeSort";
-
-  /// 显示模式
-  /// * [0] 跟随系统
-  /// * [1] 浅色模式
-  /// * [2] 深色模式
+  static const String kLiveRoomTabSort = "LiveRoomTabSort";
+  static const String kLiveRoomQuickAccessSort = "LiveRoomQuickAccessSort";
+  static const String kLiveRoomQuickAccessEnabled =
+      "LiveRoomQuickAccessEnabled";
+  static const String kLiveRoomShortcutFullScreen =
+      "LiveRoomShortcutFullScreen";
+  static const String kLiveRoomShortcutDanmaku = "LiveRoomShortcutDanmaku";
+  static const String kLiveRoomShortcutMute = "LiveRoomShortcutMute";
+  static const String kLiveRoomShortcutRefresh = "LiveRoomShortcutRefresh";
+  static const String kLiveRoomShortcutToggleChat =
+      "LiveRoomShortcutToggleChat";
+  static const String kLiveRoomShortcutVolumeUp = "LiveRoomShortcutVolumeUp";
+  static const String kLiveRoomShortcutVolumeDown =
+      "LiveRoomShortcutVolumeDown";
+  static const String kLastSearchSiteId = "LastSearchSiteId";
+  static const String kFollowGroupMode = "FollowGroupMode";
+  static const String kFollowSelectedGroupId = "FollowSelectedGroupId";
+  static const String kFollowDisplayStyle = "FollowDisplayStyle";
+  static const String kFollowOnlyLive = "FollowOnlyLive";
+  static const String kFollowRefreshOnEnter = "FollowRefreshOnEnter";
+  static const String kFollowShowLiveCover = "FollowShowLiveCover";
+  static const String kFollowShowSpecialFollow = "FollowShowSpecialFollow";
+  static const String kRememberWindowPlacement = "RememberWindowPlacement";
+  static const String kDesktopWindowBounds = "DesktopWindowBounds";
+  static const String kDesktopWindowMaximized = "DesktopWindowMaximized";
+  static const String kMultiRoomGap = "MultiRoomGap";
+  static const String kMultiRoomCollapseChat = "MultiRoomCollapseChat";
+  static const String kMultiRoomShowChatPanel = "MultiRoomShowChatPanel";
+  static const String kMultiRoomLowMemoryDegrade = "MultiRoomLowMemoryDegrade";
+  static const String kMultiRoomSingleAudio = "MultiRoomSingleAudio";
+  static const String kMultiRoomAdaptiveQuality = "MultiRoomAdaptiveQuality";
+  static const String kFullScreenForceLandscape = "FullScreenForceLandscape";
+  static const String kAutoSelectFastestLine = "AutoSelectFastestLine";
+  static const String kRoomQualityMemory = "RoomQualityMemory";
+  static const String kMultiRoomLayout = "MultiRoomLayout";
   static const String kThemeMode = "ThemeMode";
-
-  /// DEBUG模式
+  static const String kAppIconVariant = "AppIconVariant";
   static const String kDebugModeKey = "DebugMode";
-
-  /// 弹幕大小
   static const String kDanmuSize = "DanmuSize";
-
-  /// 弹幕速度
   static const String kDanmuSpeed = "DanmuSpeed";
-
-  /// 弹幕区域
   static const String kDanmuArea = "DanmuArea";
-
-  /// 弹幕透明度
+  static const String kDanmuLineCount = "DanmuLineCount";
+  static const String kDanmuDelay = "DanmuDelay";
   static const String kDanmuOpacity = "DanmuOpacity";
-
-  /// 弹幕描边大小
   static const String kDanmuStrokeWidth = "DanmuStrokeWidth";
-
-  /// 弹幕-屏蔽滚动
   static const String kDanmuHideScroll = "DanmuHideScroll";
-
-  /// 弹幕-屏蔽底部
   static const String kDanmuHideBottom = "DanmuHideBottom";
-
-  /// 弹幕-屏蔽顶部
   static const String kDanmuHideTop = "DanmuHideTop";
-
-  /// 弹幕-顶部边距
   static const String kDanmuTopMargin = "DanmuTopMargin";
-
-  /// 弹幕-底部边距
   static const String kDanmuBottomMargin = "DanmuBottomMargin";
-
-  /// 弹幕开启
   static const String kDanmuEnable = "DanmuEnable";
-
-  /// 弹幕字重
+  static const String kDanmuRenderEmoji = "DanmuRenderEmoji";
+  static const String kDanmuShieldEnable = "DanmuShieldEnable";
+  static const String kDanmuKeywordShieldEnable = "DanmuKeywordShieldEnable";
+  static const String kDanmuUserShieldEnable = "DanmuUserShieldEnable";
   static const String kDanmuFontWeight = "DanmuFontWeight";
-
-  /// 硬件解码
+  static const String kContributionRankEnable = "ContributionRankEnable";
   static const String kHardwareDecode = "HardwareDecode";
-
-  /// 聊天区文字大小
+  static const String kIosOriginalQualityPowerSaving =
+      "IosOriginalQualityPowerSaving";
   static const String kChatTextSize = "ChatTextSize";
-
-  /// 聊天区间隔
   static const String kChatTextGap = "ChatTextGap";
-
-  /// 聊天区-气泡样式
   static const String kChatBubbleStyle = "ChatBubbleStyle";
-
-  /// 播放清晰度，0=低，1=中，2=高
   static const String kQualityLevel = "QualityLevel";
-
-  /// 蜂窝网络下播放清晰度，0=低，1=中，2=高
   static const String kQualityLevelCellular = "QualityLevelCellular";
-
-  /// 开启定时关闭
+  static const String kOhosAutoQualityDegrade = "OhosAutoQualityDegrade";
+  static const String kOhosNetworkFluctuationNotice =
+      "OhosNetworkFluctuationNotice";
   static const String kAutoExitEnable = "AutoExitEnable";
-
-  /// 定时关闭时间（分钟）
   static const String kAutoExitDuration = "AutoExitDuration";
-
-  /// 房间内定时关闭时间（分钟）
-  /// 需要一个不同的 key，因为用户在房间内设置的倒计时和全局的可能不同。
   static const String kRoomAutoExitDuration = "RoomAutoExitDuration";
-
-  /// 播放器兼容模式
   static const String kPlayerCompatMode = "PlayerCompatMode";
-
-  /// 播放器后台自动暂停
   static const String kPlayerAutoPause = "PlayerAutoPause";
-
-  /// 播放器缓冲区大小
+  static const String kAllowBackgroundPlayback = "AllowBackgroundPlayback";
   static const String kPlayerBufferSize = "PlayerBufferSize";
-
-  /// 播放器强制使用HTTPS
   static const String kPlayerForceHttps = "PlayerForceHttps";
-
-  /// 自动全屏
+  static const String kPlayerGestureControlEnable =
+      "PlayerGestureControlEnable";
+  static const String kAutoSwitchNextOnLiveEnd = "AutoSwitchNextOnLiveEnd";
+  static const String kAutoSwitchNextOnPlaybackFailure =
+      "AutoSwitchNextOnPlaybackFailure";
   static const String kAutoFullScreen = "AutoFullScreen";
-
-  /// 显示SC
+  static const String kAutoPipOnExit = "AutoPipOnExit";
   static const String kPlayerShowSuperChat = "PlayerShowSuperChat";
-
-  /// 播放器音量
+  static const String kPlayerShowPlayUrl = "PlayerShowPlayUrl";
+  static const String kLiveEventFlowEnable = "LiveEventFlowEnable";
+  static const String kLiveEventFlowLimit = "LiveEventFlowLimit";
+  static const String kLiveEventFlowOverlayEnable =
+      "LiveEventFlowOverlayEnable";
+  static const String kLiveEventFlowWindowSeconds =
+      "LiveEventFlowWindowSeconds";
+  static const String kLiveEventFlowDisplaySeconds =
+      "LiveEventFlowDisplaySeconds";
+  static const String kLiveEventFlowMinCount = "LiveEventFlowMinCount";
   static const String kPlayerVolume = "PlayerVolume";
-
-  /// 小窗隐藏弹幕
   static const String kPIPHideDanmu = "PIPHideDanmu";
-
-  /// 哔哩哔哩cookie
+  static const String kPIPHideDanmuDefaultMigrated =
+      "PIPHideDanmuDefaultMigrated";
+  static const String kSuperChatSortDesc = "SuperChatSortDesc";
+  static const String kDanmuDedupeEnable = "DanmuDedupeEnable";
+  static const String kDanmuDedupeMode = "DanmuDedupeMode";
+  static const String kDanmuDedupeWindow = "DanmuDedupeWindow";
+  static const String kDanmuDedupeStep = "DanmuDedupeStep";
   static const String kBilibiliCookie = "BilibiliCookie";
-
-  /// 抖音cookie
   static const String kDouyinCookie = "DouyinCookie";
-
-  ///主题色
+  static const String kKuaishouCookie = "KuaishouCookie";
+  static const String kKuaishouKww = "KuaishouKww";
+  static const String kKuaishouCookieExpiresAt = "KuaishouCookieExpiresAt";
+  static const String kKuaishouSecondaryCookie = "KuaishouSecondaryCookie";
+  static const String kKuaishouSecondaryKww = "KuaishouSecondaryKww";
+  static const String kKuaishouSecondaryCookieExpiresAt =
+      "KuaishouSecondaryCookieExpiresAt";
+  static const String kKuaishouAccountPoolState = "KuaishouAccountPoolState";
+  static const String kKuaishouCategorySnapshot = "KuaishouCategorySnapshotV1";
   static const String kStyleColor = "kStyleColor";
-
-  ///动态取色
   static const String kIsDynamic = "kIsDynamic";
-
-  /// 提示哔哩哔哩登录
   static const String kBilibiliLoginTip = "BilibiliLoginTip";
-
-  /// 日志记录
   static const String kLogEnable = "LogEnable";
-
-  /// 开启自定义播放器视频输出
   static const String kCustomPlayerOutput = "CustomPlayerOutput";
-
-  /// 视频输出驱动
   static const String kVideoOutputDriver = "VideoOutputDriver";
-
-  /// 视频硬件解码器
   static const String kVideoHardwareDecoder = "VideoHardwareDecoder";
-
-  /// 音频输出驱动
   static const String kAudioOutputDriver = "AudioOutputDriver";
-
-  /// 开启自动更新关注
+  static const String kMpvProfile = "MpvProfile";
+  static const String kMpvLiveLatencyMode = "MpvLiveLatencyMode";
+  static const String kMpvAdvancedOptions = "MpvAdvancedOptions";
+  static const String kImportedMpvConfPath = "ImportedMpvConfPath";
   static const String kAutoUpdateFollowEnable = "AutoUpdateFollowEnable";
 
-  /// 定时自动更新关注间隔（分钟）
+  /// 鸿蒙后台特别关注检查开关（默认关闭，开启会增加耗电）。
+  static const String kOhosBackgroundFollowCheck = "OhosBackgroundFollowCheck";
   static const String kUpdateFollowDuration = "AutoUpdateFollowDuration";
-
-  /// 开启多线程更新关注
   static const String kUpdateFollowThreadCount = "UpdateFollowThreadCount";
-
-  /// WebDAV_服务器地址
+  static const String kFollowPageSize = "FollowPageSize";
+  static const String kFollowRefreshTaskState = "FollowRefreshTaskState";
+  static const String kFollowRefreshTaskTargets = "FollowRefreshTaskTargets";
+  static const String kUserRemarks = "UserRemarks";
+  static const String kLastLiveRoom = "LastLiveRoom";
+  static const String kLastLiveRoomResumePending = "LastLiveRoomResumePending";
   static const String kWebDAVUri = "WebDAVUri";
-
-  /// WebDAV_登录账号
   static const String kWebDAVUser = "WebDAVUser";
-
-  /// WebDAV_登录密码
   static const String kWebDAVPassword = "kWebDAVPassword";
-
-  /// WebDAV_最后一次上传时间
   static const String kWebDAVLastUploadTime = "kWebDAVLastUploadTime";
-
-  /// WebDAV_最后一次备份时间
   static const String kWebDAVLastRecoverTime = "kWebDAVLastRecoverTime";
-
+  static const String kSyncServerUrl = "SyncServerUrl";
+  static const String kSyncProxyUrl = "SyncProxyUrl";
   late Box settingsBox;
   late Box<String> shieldBox;
+  late Box<String> shieldPresetBox;
 
   Future init() async {
-    settingsBox = await Hive.openBox(
-      "LocalStorage",
-    );
-    shieldBox = await Hive.openBox(
-      "DanmuShield",
-    );
+    settingsBox = await Hive.openBox("LocalStorage");
+    shieldBox = await Hive.openBox("DanmuShield");
+    shieldPresetBox = await Hive.openBox("DanmuShieldPreset");
   }
 
   T getValue<T>(dynamic key, T defaultValue) {
     try {
-      var value = settingsBox.get(key, defaultValue: defaultValue) as T;
-      Log.d("Get LocalStorage：$key\r\n$value");
+      final value = settingsBox.get(key, defaultValue: defaultValue) as T;
+      Log.d(
+        "Get LocalStorage: $key\n${_isSensitiveKey(key) ? '<redacted>' : value}",
+      );
       return value;
     } catch (e) {
       Log.logPrint(e);
@@ -192,12 +178,22 @@ class LocalStorageService extends GetxService {
   }
 
   Future setValue<T>(dynamic key, T value) async {
-    Log.d("Set LocalStorage：$key\r\n$value");
+    Log.d(
+      "Set LocalStorage: $key\n${_isSensitiveKey(key) ? '<redacted>' : value}",
+    );
     return await settingsBox.put(key, value);
   }
 
   Future removeValue<T>(dynamic key) async {
-    Log.d("Remove LocalStorage：$key");
+    Log.d("Remove LocalStorage: $key");
     return await settingsBox.delete(key);
   }
+
+  bool _isSensitiveKey(dynamic key) => const {
+        kKuaishouCookie,
+        kKuaishouKww,
+        kKuaishouSecondaryCookie,
+        kKuaishouSecondaryKww,
+        kKuaishouAccountPoolState,
+      }.contains(key);
 }

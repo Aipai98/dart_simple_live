@@ -131,18 +131,20 @@ class RemoteSyncRoomPage extends GetView<RemoteSyncRoomController> {
                         Icons.copy,
                         size: 20,
                       ),
-                      onPressed: () {
-                        Utils.copyToClipboard(controller.currentRoomId.value);
-                      },
+                      onPressed: controller.hasValidRoomId
+                          ? () {
+                              Utils.copyToClipboard(
+                                  controller.currentRoomId.value);
+                            }
+                          : null,
                     ),
                     IconButton(
                       icon: const Icon(
                         Icons.qr_code,
                         size: 20,
                       ),
-                      onPressed: () {
-                        controller.showQRInfo();
-                      },
+                      onPressed:
+                          controller.hasValidRoomId ? controller.showQRInfo : null,
                     ),
                     AppStyle.hGap4,
                   ],
@@ -194,6 +196,26 @@ class RemoteSyncRoomPage extends GetView<RemoteSyncRoomController> {
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () {
                     controller.syncBiliAccount();
+                  },
+                ),
+                AppStyle.divider,
+                ListTile(
+                  leading: const Icon(Icons.music_note),
+                  title: const Text("发送抖音账号"),
+                  subtitle: const Text("同步当前保存的抖音 Cookie"),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    controller.syncDouyinAccount();
+                  },
+                ),
+                AppStyle.divider,
+                ListTile(
+                  leading: const Icon(Icons.shopping_bag_outlined),
+                  title: const Text("发送快手账号"),
+                  subtitle: const Text("同步快手主副账号备份"),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    controller.syncKuaishouAccount();
                   },
                 ),
               ],
@@ -254,7 +276,7 @@ class RemoteSyncRoomPage extends GetView<RemoteSyncRoomController> {
                     ),
                     subtitle: Text("${user.app} - v${user.version}"),
                     trailing: Visibility(
-                      visible: controller.signalR.hubConnection?.connectionId ==
+                      visible: controller.signalR.hubConnection.connectionId ==
                           user.connectionId,
                       child: const Text(
                         "本机",

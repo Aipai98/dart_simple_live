@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:simple_live_app/app/app_style.dart';
+import 'package:simple_live_app/app/utils.dart';
 
 class SettingsNumber extends StatelessWidget {
   final String title;
@@ -103,12 +104,11 @@ class SettingsNumber extends StatelessWidget {
 
   void openSilder(BuildContext context) {
     var newValue = value.obs;
-    showModalBottomSheet(
+    Utils.showModalBottomSheetSafe(
       context: context,
       showDragHandle: true,
       useSafeArea: true, //useSafeArea似乎无效
-      builder: (_) => SafeArea(
-        top: false,
+      builder: (_) => Utils.bottomSheetSafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,

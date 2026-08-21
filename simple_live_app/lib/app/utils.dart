@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:device_info_plus/device_info_plus.dart';
@@ -16,6 +17,12 @@ import 'package:simple_live_app/app/log.dart';
 typedef TextValidate = bool Function(String text);
 
 class Utils {
+  static int _rightDialogRequest = 0;
+  static Route<void>? _rightDialogRoute;
+  static NavigatorState? _rightDialogNavigator;
+  static Future<void>? _rightDialogFuture;
+  static bool get isOhos => Platform.operatingSystem == 'ohos';
+
   static late PackageInfo packageInfo;
   static DateFormat dateFormat = DateFormat("MM-dd HH:mm");
   static DateFormat dateFormatWithYear = DateFormat("yyyy-MM-dd HH:mm");
@@ -54,12 +61,17 @@ class Utils {
     bool selectable = false,
     List<Widget>? actions,
   }) async {
-    var result = await Get.dialog(
-      AlertDialog(
+    var result = await showDialogSafe<bool>(
+      context: Get.context!,
+      builder: (dialogContext) => AlertDialog(
         title: Text(title),
         content: Container(
-          constraints: const BoxConstraints(
-            maxHeight: 400,
+          constraints: BoxConstraints(
+            // 屏幕 30% 高（clamp 160-420）：鸿蒙字体缩放/小屏下 content
+            // 过高会把 actions 挤出（BOTTOM OVERFLOWED 27px）。
+            // content 内部 SingleChildScrollView 滚动看全文，按钮固定。
+            maxHeight: (MediaQuery.sizeOf(dialogContext).height * 0.3)
+                .clamp(160.0, 420.0),
           ),
           child: SingleChildScrollView(
             child: Padding(
@@ -90,8 +102,9 @@ class Utils {
   /// - `confirm` 确认按钮内容，留空为确定
   static Future<bool> showMessageDialog(String content,
       {String title = '', String confirm = '', bool selectable = false}) async {
-    var result = await Get.dialog(
-      AlertDialog(
+    var result = await showDialogSafe<bool>(
+      context: Get.context!,
+      builder: (_) => AlertDialog(
         title: Text(title),
         content: Padding(
           padding: AppStyle.edgeInsetsV12,
@@ -114,109 +127,209 @@ class Utils {
     required Widget child,
     double width = 320,
     bool useSystem = false,
+    bool clickMaskDismiss = true,
   }) {
-    SmartDialog.show(
-      alignment: Alignment.topRight,
-      animationBuilder: (controller, child, animationParam) {
-        //从右到左
-        return SlideTransition(
-          position: Tween<Offset>(
-            begin: const Offset(1, 0),
-            end: Offset.zero,
-          ).animate(controller.view),
+    // `useSystem` is kept for source compatibility with existing callers.
+    // Right-side panels are always Navigator routes now, so they cannot leak
+    // through SmartDialog's process-wide custom-dialog queue.
+    final request = ++_rightDialogRequest;
+    // 等当前点击手势和外层播放器的 rebuild 完成后再创建路由，
+    // 避免新弹窗的 barrier 接收到触发按钮的同一次点击。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (request != _rightDialogRequest) return;
+      unawaited(
+        _openRightDialog(
+          request: request,
+          title: title,
+          onDismiss: onDismiss,
           child: child,
-        );
+          width: width,
+          clickMaskDismiss: clickMaskDismiss,
+        ),
+      );
+    });
+    WidgetsBinding.instance.scheduleFrame();
+  }
+
+  static Future<void> _openRightDialog({
+    required int request,
+    required String title,
+    required Function()? onDismiss,
+    required Widget child,
+    required double width,
+    required bool clickMaskDismiss,
+  }) async {
+    await _dismissRightDialog();
+    if (request != _rightDialogRequest) return;
+
+    final context = Get.overlayContext ?? Get.context;
+    if (context == null || !context.mounted) return;
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final route = _RightSideDialogRoute(
+      title: title,
+      width: width,
+      clickOutsideDismiss: clickMaskDismiss,
+      onHeaderBack: () async {
+        Log.d('RightSideDialogRoute: onHeaderBack title=$title');
+        await _dismissRightDialog();
+        onDismiss?.call();
       },
-      useSystem: useSystem,
-      maskColor: Colors.transparent,
-      animationTime: const Duration(milliseconds: 200),
-      builder: (context) => Container(
-        width: width + MediaQuery.of(context).padding.right,
-        padding: EdgeInsets.only(right: MediaQuery.of(context).padding.right),
-        decoration: BoxDecoration(
-          color: Get.theme.cardColor,
-          borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(4),
-            bottomLeft: Radius.circular(4),
-          ),
-        ),
-        child: SafeArea(
-          left: false,
-          right: false,
-          child: MediaQuery(
-            data: const MediaQueryData(padding: EdgeInsets.zero),
-            child: Column(
-              children: [
-                ListTile(
-                  visualDensity: VisualDensity.compact,
-                  contentPadding: EdgeInsets.zero,
-                  leading: IconButton(
-                    onPressed: () {
-                      SmartDialog.dismiss(status: SmartStatus.allCustom).then(
-                        (value) => onDismiss?.call(),
-                      );
-                    },
-                    icon: const Icon(Icons.arrow_back),
-                  ),
-                  title: Text(
-                    title,
-                    style: Get.textTheme.titleMedium,
-                  ),
-                ),
-                Divider(
-                  height: 1,
-                  color: Colors.grey.withAlpha(25),
-                ),
-                Expanded(
-                  child: child,
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
+      onCovered: _dismissRightDialog,
+      child: child,
+    );
+    _rightDialogRoute = route;
+    _rightDialogNavigator = navigator;
+    Log.d('RightSideDialogRoute: opened title=$title request=$request\n${StackTrace.current}');
+    final routeFuture = navigator.push<void>(route);
+    // 前 1000ms 禁用 barrier 点击（拦截触摸穿透，重复事件约 300-400ms 延迟），
+    // 之后启用正常遮罩关闭。Timer 可取消，route dispose 时避免跨测试残留。
+    route.scheduleBarrierEnable();
+    _rightDialogFuture = routeFuture;
+    unawaited(
+      routeFuture.whenComplete(() {
+        if (identical(_rightDialogRoute, route)) {
+          _rightDialogRoute = null;
+          _rightDialogNavigator = null;
+          _rightDialogFuture = null;
+        }
+      }),
     );
   }
 
+  static Future<void> _dismissRightDialog() async {
+    final route = _rightDialogRoute;
+    final navigator = _rightDialogNavigator;
+    final routeFuture = _rightDialogFuture;
+    _rightDialogRoute = null;
+    _rightDialogNavigator = null;
+    _rightDialogFuture = null;
+    if (route == null || navigator == null) return;
+    Log.d('RightSideDialogRoute: dismiss called (isCurrent=${route.isCurrent}, isActive=${route.isActive})\n${StackTrace.current}');
+    if (route.isCurrent) {
+      navigator.pop<void>();
+    } else if (route.isActive) {
+      navigator.removeRoute(route);
+    }
+    if (routeFuture != null) {
+      await routeFuture;
+    }
+  }
+
   static void hideRightDialog() {
-    SmartDialog.dismiss(status: SmartStatus.allCustom);
+    _rightDialogRequest += 1;
+    Log.d('RightSideDialogRoute: hideRightDialog called\n${StackTrace.current}');
+    unawaited(_dismissRightDialog());
+  }
+
+  /// 测试专用：重置右侧面板的静态状态，避免跨测试残留
+  /// （tearDown 中 hideRightDialog 是异步的，Get.reset() 后残留的
+  ///  route/navigator 已 dispose，访问会抛异常）。
+  @visibleForTesting
+  static void debugResetRightDialog() {
+    _rightDialogRequest = 0;
+    _rightDialogRoute = null;
+    _rightDialogNavigator = null;
+    _rightDialogFuture = null;
+  }
+
+  static Future<void> switchRightDialog(
+    FutureOr<void> Function() openNext,
+  ) async {
+    _rightDialogRequest += 1;
+    Log.d('RightSideDialogRoute: switchRightDialog called\n${StackTrace.current}');
+    await _dismissRightDialog();
+    await Future.delayed(const Duration(milliseconds: 220));
+    await openNext();
   }
 
   static Future showBottomSheet({
     required String title,
     required Widget child,
     double maxWidth = 600,
+    double? maxHeightFactor,
   }) async {
-    var result = await showModalBottomSheet(
-      context: Get.context!,
-      constraints: BoxConstraints(
-        maxWidth: maxWidth,
-      ),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.only(
-          topLeft: Radius.circular(12),
-          topRight: Radius.circular(12),
-        ),
-      ),
-      builder: (_) => Column(
-        children: [
-          ListTile(
-            contentPadding: const EdgeInsets.only(
-              left: 12,
-            ),
-            title: Text(title),
-            trailing: IconButton(
-              onPressed: Get.back,
-              icon: const Icon(Remix.close_line),
-            ),
-          ),
-          Expanded(
-            child: child,
-          ),
-        ],
+    final context = Get.context;
+    if (context == null) return null;
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final route = _RightSideSheetRoute(
+      title: title,
+      child: child,
+      maxWidth: maxWidth,
+      maxHeightFactor: maxHeightFactor,
+    );
+    // 前 1000ms 禁用 barrier 点击（拦截 LiveContainer/iOS26 触摸穿透），
+    // 与右侧弹窗同一套防护。
+    route.scheduleBarrierEnable();
+    return navigator.push<void>(route);
+  }
+
+  /// 通用底部弹窗（替代 showModalBottomSheet），带 barrier 1000ms 防穿透窗口。
+  /// 参数与 showModalBottomSheet 常用子集对齐。
+  static Future<T?> showModalBottomSheetSafe<T>({
+    required BuildContext context,
+    required WidgetBuilder builder,
+    bool isScrollControlled = false,
+    bool showDragHandle = false,
+    bool useSafeArea = false,
+    BoxConstraints? constraints,
+    ShapeBorder? shape,
+    Color? backgroundColor,
+  }) {
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final route = _SafeBottomSheetRoute<T>(
+      builder: builder,
+      isScrollControlled: isScrollControlled,
+      showDragHandle: showDragHandle,
+      useSafeArea: useSafeArea,
+      constraints: constraints,
+      shape: shape,
+      backgroundColor: backgroundColor,
+      alignment: Alignment.bottomCenter,
+      dismissByBarrier: true,
+    );
+    // 前 1000ms 禁用 barrier 点击（拦截 LiveContainer/iOS26 触摸穿透）。
+    route.scheduleBarrierEnable();
+    return navigator.push<T>(route);
+  }
+
+  /// 通用居中弹窗（替代 Get.dialog / showDialog），带 barrier 1000ms 防穿透窗口。
+  static Future<T?> showDialogSafe<T>({
+    required BuildContext context,
+    required WidgetBuilder builder,
+    bool dismissByBarrier = true,
+    // 默认开启键盘避让：含 TextField 的对话框（搜索/编辑/粘贴等）
+    // 弹键盘时自动上移，不再被压缩溢出。无键盘对话框无副作用。
+    bool isScrollControlled = true,
+  }) {
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final route = _SafeBottomSheetRoute<T>(
+      builder: builder,
+      isScrollControlled: isScrollControlled,
+      showDragHandle: false,
+      useSafeArea: false,
+      constraints: null,
+      shape: null,
+      backgroundColor: Colors.transparent,
+      alignment: Alignment.center,
+      dismissByBarrier: dismissByBarrier,
+    );
+    // 前 1000ms 禁用 barrier 点击（拦截 LiveContainer/iOS26 触摸穿透）。
+    route.scheduleBarrierEnable();
+    return navigator.push<T>(route);
+  }
+
+  static Widget bottomSheetSafeArea({
+    required Widget child,
+    double bottom = 12,
+  }) {
+    return SafeArea(
+      top: false,
+      bottom: false,
+      child: Padding(
+        padding: AppStyle.bottomSheetPadding(bottom: bottom),
+        child: child,
       ),
     );
-    return result;
   }
 
   /// 文本编辑的弹窗
@@ -234,8 +347,11 @@ class Utils {
   }) async {
     final TextEditingController textEditingController =
         TextEditingController(text: content);
-    var result = await Get.dialog(
-      AlertDialog(
+    var result = await showDialogSafe<String>(
+      context: Get.context!,
+      // 键盘避让：输入框弹键盘时对话框上移，不再溢出。
+      isScrollControlled: true,
+      builder: (_) => AlertDialog(
         title: Text(title),
         content: Padding(
           padding: AppStyle.edgeInsetsT12,
@@ -281,23 +397,27 @@ class Utils {
     T value, {
     String title = '',
   }) async {
-    var result = await Get.dialog(
-      RadioGroup(
-        groupValue: value,
-        onChanged: (e) {
-          Get.back(result: e);
-        },
-        child: SimpleDialog(
-          title: Text(title),
-          children: contents
-              .map(
-                (e) => RadioListTile<T>(
-                  title: Text(e.toString()),
-                  value: e,
-                ),
-              )
-              .toList(),
-        ),
+    var result = await showDialogSafe<T>(
+      context: Get.context!,
+      builder: (_) => SimpleDialog(
+        title: Text(title),
+        children: [
+          RadioGroup<T>(
+            groupValue: value,
+            onChanged: (selected) => Get.back(result: selected),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: contents
+                  .map(
+                    (e) => RadioListTile<T>(
+                      title: Text(e.toString()),
+                      value: e,
+                    ),
+                  )
+                  .toList(),
+            ),
+          ),
+        ],
       ),
     );
     return result;
@@ -312,8 +432,9 @@ class Utils {
     Widget? title,
     List<Widget>? actions,
   }) async {
-    var result = await Get.dialog(
-      AlertDialog(
+    var result = await showDialogSafe<dynamic>(
+      context: Get.context!,
+      builder: (_) => AlertDialog(
         title: title ?? const Text("帮助"),
         scrollable: true,
         content: SingleChildScrollView(child: ListBody(children: content)),
@@ -349,23 +470,27 @@ class Utils {
     T value, {
     String title = '',
   }) async {
-    var result = await Get.dialog(
-      RadioGroup(
-        groupValue: value,
-        onChanged: (e) {
-          Get.back(result: e);
-        },
-        child: SimpleDialog(
-          title: Text(title),
-          children: contents.keys
-              .map(
-                (e) => RadioListTile<T>(
-                  title: Text((contents[e] ?? '-').tr),
-                  value: e,
-                ),
-              )
-              .toList(),
-        ),
+    var result = await showDialogSafe<T>(
+      context: Get.context!,
+      builder: (_) => SimpleDialog(
+        title: Text(title),
+        children: [
+          RadioGroup<T>(
+            groupValue: value,
+            onChanged: (selected) => Get.back(result: selected),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: contents.keys
+                  .map(
+                    (e) => RadioListTile<T>(
+                      title: Text((contents[e] ?? '-').tr),
+                      value: e,
+                    ),
+                  )
+                  .toList(),
+            ),
+          ),
+        ],
       ),
     );
     return result;
@@ -416,7 +541,7 @@ class Utils {
   /// 检查文件权限
   static Future<bool> checkStorgePermission() async {
     try {
-      if (!Platform.isAndroid) {
+      if (!Platform.isAndroid || Utils.isOhos) {
         return true;
       }
       Permission permission = Permission.storage;
@@ -516,5 +641,453 @@ class Utils {
       return "${(size / 1024 / 1024).toStringAsFixed(2)} MB";
     }
     return "${(size / 1024 / 1024 / 1024).toStringAsFixed(2)} GB";
+  }
+}
+
+/// A route-local right-side panel.
+///
+/// Keeping this panel in the Navigator avoids adding it to SmartDialog's
+/// process-wide custom-dialog queue. Toasts and loading indicators can still
+/// use SmartDialog, while a player panel is removed by normal route lifecycle.
+class _RightSideDialogRoute extends PopupRoute<void> {
+  _RightSideDialogRoute({
+    required this.title,
+    required this.width,
+    required this.clickOutsideDismiss,
+    required this.onHeaderBack,
+    required this.onCovered,
+    required this.child,
+  });
+
+  final String title;
+  final double width;
+  final bool clickOutsideDismiss;
+  final Future<void> Function() onHeaderBack;
+  final Future<void> Function() onCovered;
+  final Widget child;
+
+  /// 弹窗 push 后前 1000ms 禁用 barrier 点击（拦截 LiveContainer/iOS26
+  /// 触摸事件重复：第一次触发 onPressed 开弹窗，第二次落在 barrier 上关闭。
+  /// 重复事件约 300-400ms 延迟，1000ms 后 enableBarrier() 启用，用户真实点击
+  /// 遮罩（>1s）正常关闭。
+  bool _barrierEnabled = false;
+  bool _disposed = false;
+  Timer? _barrierTimer;
+
+  void scheduleBarrierEnable() {
+    _barrierTimer?.cancel();
+    _barrierTimer = Timer(const Duration(milliseconds: 1000), () {
+      if (_disposed || !isActive) {
+        return;
+      }
+      enableBarrier();
+      Log.d('RightSideDialogRoute: barrier enabled title=$title');
+    });
+  }
+
+  void enableBarrier() {
+    _barrierEnabled = true;
+    // 通知 _ModalScope 重建，让 barrier 的点击响应读到新的 barrierDismissible。
+    changedExternalState();
+  }
+
+  @override
+  bool get barrierDismissible => _barrierEnabled && clickOutsideDismiss;
+
+  @override
+  void dispose() {
+    _barrierTimer?.cancel();
+    _disposed = true;
+    Log.d('RightSideDialogRoute disposed (title=$title, isCurrent=$isCurrent, isActive=$isActive)\n${StackTrace.current}');
+    super.dispose();
+  }
+
+  @override
+  void didComplete(void result) {
+    Log.d('RightSideDialogRoute: didComplete title=$title (pop 完成)\n${StackTrace.current}');
+    super.didComplete(result);
+  }
+
+  @override
+  void onPopInvokedWithResult(bool didPop, dynamic result) {
+    Log.d('RightSideDialogRoute: onPopInvoked title=$title didPop=$didPop\n${StackTrace.current}');
+    // PopupRoute<void> 的 result 是 void?，只能传 null。
+    super.onPopInvokedWithResult(didPop, null);
+  }
+
+  @override
+  void didPopNext(Route<dynamic> nextRoute) {
+    Log.d('RightSideDialogRoute: didPopNext title=$title next=${nextRoute.runtimeType}');
+    super.didPopNext(nextRoute);
+  }
+
+  @override
+  void didChangeNext(Route<dynamic>? nextRoute) {
+    super.didChangeNext(nextRoute);
+    Log.d('RightSideDialogRoute: didChangeNext title=$title next=${nextRoute?.runtimeType} completed=${animation?.isCompleted} isCurrent=$isCurrent isActive=$isActive');
+    if (nextRoute == null) return;
+    // 只响应真正的页面导航（PageRoute）。SmartDialog toast、Get.bottomSheet
+    // 等浮层（PopupRoute）覆盖时不应关闭右侧面板——否则弹窗打开瞬间若有
+    // 任何浮层 route push（如自动降画质 toast），弹窗会"刚打开就消失"。
+    if (nextRoute is! PageRoute) return;
+    // 防御：入场动画尚未完成时的 PageRoute 覆盖多为手势/系统竞态，
+    // 忽略，避免"点开不到一秒自动关闭"。（不依赖墙钟，测试可控。）
+    if (animation?.isCompleted != true) return;
+    // A page was pushed on top: remove this transient panel after the push
+    // settles so it cannot contaminate the destination or reappear on return.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (isActive && !isCurrent) {
+        Log.d('RightSideDialogRoute: covered by ${nextRoute.runtimeType}, dismissing');
+        unawaited(onCovered());
+      }
+    });
+  }
+
+  @override
+  Color? get barrierColor => Colors.transparent;
+
+  @override
+  String? get barrierLabel => "关闭侧边弹窗";
+
+  @override
+  Duration get transitionDuration => const Duration(milliseconds: 200);
+
+  @override
+  Duration get reverseTransitionDuration => const Duration(milliseconds: 200);
+
+  @override
+  Widget buildPage(
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+  ) {
+    final mediaQuery = MediaQuery.of(context);
+    final panelWidth = (width + mediaQuery.padding.right)
+        .clamp(0.0, mediaQuery.size.width)
+        .toDouble();
+    return Align(
+      alignment: Alignment.centerRight,
+      child: SizedBox(
+        width: panelWidth,
+        height: mediaQuery.size.height,
+        child: Material(
+          color: Theme.of(context).cardColor,
+          shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.only(
+              topLeft: Radius.circular(4),
+              bottomLeft: Radius.circular(4),
+            ),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Padding(
+            padding: EdgeInsets.only(right: mediaQuery.padding.right),
+            child: SafeArea(
+              left: false,
+              right: false,
+              child: Column(
+                children: [
+                  ListTile(
+                    visualDensity: VisualDensity.compact,
+                    contentPadding: EdgeInsets.zero,
+                    leading: IconButton(
+                      onPressed: () => unawaited(onHeaderBack()),
+                      icon: const Icon(Icons.arrow_back),
+                    ),
+                    title: Text(
+                      title,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ),
+                  Divider(
+                    height: 1,
+                    color: Colors.grey.withAlpha(25),
+                  ),
+                  Expanded(child: child),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget buildTransitions(
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    final curved = CurvedAnimation(
+      parent: animation,
+      curve: Curves.easeOut,
+      reverseCurve: Curves.easeIn,
+    );
+    return SlideTransition(
+      position: Tween<Offset>(
+        begin: const Offset(1, 0),
+        end: Offset.zero,
+      ).animate(curved),
+      child: child,
+    );
+  }
+}
+
+/// 底部弹窗（替代 showModalBottomSheet），带 barrier 1000ms 防穿透窗口。
+/// 视觉与 showModalBottomSheet 一致（底部圆角、maxWidth 约束、SafeArea）。
+class _RightSideSheetRoute extends PopupRoute<void> {
+  _RightSideSheetRoute({
+    required this.title,
+    required this.child,
+    required this.maxWidth,
+    required this.maxHeightFactor,
+  });
+
+  final String title;
+  final Widget child;
+  final double maxWidth;
+  final double? maxHeightFactor;
+
+  bool _barrierEnabled = false;
+  bool _disposed = false;
+  Timer? _barrierTimer;
+
+  void scheduleBarrierEnable() {
+    _barrierTimer?.cancel();
+    _barrierTimer = Timer(const Duration(milliseconds: 1000), () {
+      if (_disposed || !isActive) {
+        return;
+      }
+      _barrierEnabled = true;
+      changedExternalState();
+    });
+  }
+
+  @override
+  bool get barrierDismissible => _barrierEnabled;
+
+  @override
+  Color? get barrierColor => Colors.black54;
+
+  @override
+  String? get barrierLabel => "关闭";
+
+  @override
+  Duration get transitionDuration => const Duration(milliseconds: 200);
+
+  @override
+  Widget buildPage(
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+  ) {
+    final mediaQuery = MediaQuery.of(context);
+    final heightFactor = maxHeightFactor;
+    final maxHeight = heightFactor == null
+        ? double.infinity
+        : mediaQuery.size.height * heightFactor;
+    return Align(
+      alignment: Alignment.bottomCenter,
+      child: Container(
+        constraints: BoxConstraints(
+          maxWidth: maxWidth,
+          maxHeight: maxHeight,
+        ),
+        decoration: BoxDecoration(
+          color: Theme.of(context).scaffoldBackgroundColor,
+          borderRadius: const BorderRadius.only(
+            topLeft: Radius.circular(12),
+            topRight: Radius.circular(12),
+          ),
+        ),
+        child: SafeArea(
+          top: true,
+          bottom: false,
+          child: Padding(
+            padding: AppStyle.bottomSheetPadding(),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  contentPadding: const EdgeInsets.only(left: 12),
+                  title: Text(title),
+                  trailing: IconButton(
+                    onPressed: Get.back,
+                    icon: const Icon(Remix.close_line),
+                  ),
+                ),
+                Flexible(child: child),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget buildTransitions(
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    final curved = CurvedAnimation(
+      parent: animation,
+      curve: Curves.easeOut,
+      reverseCurve: Curves.easeIn,
+    );
+    return SlideTransition(
+      position: Tween<Offset>(
+        begin: const Offset(0, 1),
+        end: Offset.zero,
+      ).animate(curved),
+      child: child,
+    );
+  }
+
+  @override
+  void dispose() {
+    _barrierTimer?.cancel();
+    _disposed = true;
+    super.dispose();
+  }
+}
+
+/// 通用底部弹窗 route（替代 showModalBottomSheet），带 barrier 1000ms 防穿透窗口。
+class _SafeBottomSheetRoute<T> extends PopupRoute<T> {
+  _SafeBottomSheetRoute({
+    required this.builder,
+    required this.isScrollControlled,
+    required this.showDragHandle,
+    required this.useSafeArea,
+    required this.constraints,
+    required this.shape,
+    required this.backgroundColor,
+    required this.alignment,
+    required this.dismissByBarrier,
+  });
+
+  final WidgetBuilder builder;
+  final bool isScrollControlled;
+  final bool showDragHandle;
+  final bool useSafeArea;
+  final BoxConstraints? constraints;
+  final ShapeBorder? shape;
+  final Color? backgroundColor;
+  final AlignmentGeometry alignment;
+  final bool dismissByBarrier;
+
+  bool _barrierEnabled = false;
+  bool _disposed = false;
+  Timer? _barrierTimer;
+
+  void scheduleBarrierEnable() {
+    _barrierTimer?.cancel();
+    _barrierTimer = Timer(const Duration(milliseconds: 1000), () {
+      if (_disposed || !isActive) {
+        return;
+      }
+      _barrierEnabled = true;
+      changedExternalState();
+    });
+  }
+
+  @override
+  bool get barrierDismissible => _barrierEnabled && dismissByBarrier;
+
+  @override
+  Color? get barrierColor => Colors.black54;
+
+  @override
+  String? get barrierLabel => "关闭";
+
+  @override
+  Duration get transitionDuration => const Duration(milliseconds: 200);
+
+  @override
+  Widget buildPage(
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+  ) {
+    final mediaQuery = MediaQuery.of(context);
+    final maxHeight = isScrollControlled
+        ? mediaQuery.size.height * 0.9
+        : mediaQuery.size.height * 0.5;
+    return Align(
+      alignment: alignment,
+      child: Container(
+        // 不做键盘避让（不按 viewInsets 上移）：输入框在屏幕中间，
+        // 键盘一般比它矮不会遮挡，保持位置稳定。
+        constraints: BoxConstraints(
+          maxWidth: constraints?.maxWidth ?? double.infinity,
+          maxHeight: maxHeight,
+        ),
+        decoration: ShapeDecoration(
+          color: backgroundColor ?? Theme.of(context).scaffoldBackgroundColor,
+          shape: shape ??
+              const RoundedRectangleBorder(
+                borderRadius: BorderRadius.only(
+                  topLeft: Radius.circular(12),
+                  topRight: Radius.circular(12),
+                ),
+              ),
+        ),
+        child: SafeArea(
+          top: useSafeArea,
+          bottom: useSafeArea,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (showDragHandle)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8, bottom: 4),
+                  child: Center(
+                    child: Container(
+                      width: 32,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.grey,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                ),
+              Flexible(child: Builder(builder: builder)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget buildTransitions(
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    final curved = CurvedAnimation(
+      parent: animation,
+      curve: Curves.easeOut,
+      reverseCurve: Curves.easeIn,
+    );
+    return SlideTransition(
+      position: Tween<Offset>(
+        begin: const Offset(0, 1),
+        end: Offset.zero,
+      ).animate(curved),
+      child: child,
+    );
+  }
+
+  @override
+  void dispose() {
+    _barrierTimer?.cancel();
+    _disposed = true;
+    super.dispose();
   }
 }

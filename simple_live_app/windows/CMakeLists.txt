@@ -57,6 +57,14 @@ add_subdirectory("runner")
 # them to the application.
 include(flutter/generated_plugins.cmake)
 
+# permission_handler_windows still uses <experimental/coroutine>. MSVC 14.51
+# turns that deprecation into a hard error unless the compatibility macro is
+# defined for the plugin target.
+if(TARGET permission_handler_windows_plugin)
+  target_compile_definitions(permission_handler_windows_plugin PRIVATE
+    _SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS)
+endif()
+
 
 # === Installation ===
 # Support files are copied into place next to the executable, so that it can
@@ -87,11 +95,30 @@ if(PLUGIN_BUNDLED_LIBRARIES)
     COMPONENT Runtime)
 endif()
 
-# Copy the native assets provided by the build.dart from all packages.
-set(NATIVE_ASSETS_DIR "${PROJECT_BUILD_DIR}native_assets/windows/")
-install(DIRECTORY "${NATIVE_ASSETS_DIR}"
-   DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
-   COMPONENT Runtime)
+# Copy the native assets provided by build.dart, including dart_quickjs fallbacks.
+set(NATIVE_ASSETS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../build/native_assets/windows")
+set(DART_QUICKJS_DLL "${NATIVE_ASSETS_DIR}/dart_quickjs.dll")
+if(NOT EXISTS "${DART_QUICKJS_DLL}")
+  set(DART_QUICKJS_HOOKS_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/../.dart_tool/hooks_runner")
+  set(DART_QUICKJS_CANDIDATES
+    "${DART_QUICKJS_HOOKS_DIR}/native_assets/windows/dart_quickjs.dll")
+  file(GLOB_RECURSE DART_QUICKJS_HOOK_CANDIDATES
+    "${DART_QUICKJS_HOOKS_DIR}/native_assets/windows/*/dart_quickjs.dll"
+    "${DART_QUICKJS_HOOKS_DIR}/shared/dart_quickjs/build/*/dart_quickjs.dll")
+  list(APPEND DART_QUICKJS_CANDIDATES ${DART_QUICKJS_HOOK_CANDIDATES})
+  foreach(DART_QUICKJS_CANDIDATE IN LISTS DART_QUICKJS_CANDIDATES)
+    if(EXISTS "${DART_QUICKJS_CANDIDATE}")
+      set(DART_QUICKJS_DLL "${DART_QUICKJS_CANDIDATE}")
+      break()
+    endif()
+  endforeach()
+endif()
+if(EXISTS "${DART_QUICKJS_DLL}")
+  install(FILES "${DART_QUICKJS_DLL}"
+    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+    COMPONENT Runtime)
+endif()
 
 # Fully re-copy the assets directory on each build to avoid having stale files
 # from a previous install.

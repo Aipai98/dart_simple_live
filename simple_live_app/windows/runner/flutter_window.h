@@ -3,8 +3,11 @@
 
 #include <flutter/dart_project.h>
 #include <flutter/flutter_view_controller.h>
+#include <flutter/method_channel.h>
+#include <flutter/encodable_value.h>
 
 #include <memory>
+#include <string>
 
 #include "win32_window.h"
 
@@ -23,11 +26,19 @@ class FlutterWindow : public Win32Window {
                          LPARAM const lparam) noexcept override;
 
  private:
+  bool HandleShortcutKeyDown(WPARAM wparam, LPARAM lparam);
+  std::string ShortcutKeyForWindowsKey(WPARAM wparam, LPARAM lparam);
+  bool SendShortcutEvent(const std::string& key);
+
   // The project to run.
   flutter::DartProject project_;
 
   // The Flutter instance hosted by this window.
   std::unique_ptr<flutter::FlutterViewController> flutter_controller_;
+
+  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
+      shortcut_channel_;
+  bool shortcut_capture_enabled_ = false;
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_

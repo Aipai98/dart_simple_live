@@ -15,6 +15,27 @@ class AppColors {
     brightness: Brightness.dark,
   );
 
+  /// 按 seed 缓存 light/dark ColorScheme：主题切换（深色/浅色/跟随系统）
+  /// 与动态取色开关变化时 seed 未变，直接复用缓存，不再每次 rebuild 重算
+  /// ColorScheme.fromSeed（鸿蒙上该计算 + 全局重建叠加会明显卡顿）。
+  static final Map<int, ({ColorScheme light, ColorScheme dark})>
+      _schemeCache = {};
+  static ({ColorScheme light, ColorScheme dark}) cachedSchemes(Color seed) {
+    return _schemeCache.putIfAbsent(
+      seed.toARGB32(),
+      () => (
+        light: ColorScheme.fromSeed(
+          seedColor: seed,
+          brightness: Brightness.light,
+        ),
+        dark: ColorScheme.fromSeed(
+          seedColor: seed,
+          brightness: Brightness.dark,
+        ),
+      ),
+    );
+  }
+
   static const Color black333 = Color(0xFF333333);
 }
 
@@ -197,8 +218,39 @@ class AppStyle {
   static double get statusBarHeight => MediaQuery.of(Get.context!).padding.top;
 
   /// 底部导航条的高度
-  static double get bottomBarHeight =>
-      MediaQuery.of(Get.context!).padding.bottom;
+  static double get bottomBarHeight {
+    final mediaQuery = MediaQuery.of(Get.context!);
+    final viewPadding = mediaQuery.viewPadding.bottom;
+    final padding = mediaQuery.padding.bottom;
+    return viewPadding > padding ? viewPadding : padding;
+  }
+
+  static EdgeInsets pagePadding({
+    double horizontal = 12,
+    double top = 12,
+    double bottom = 12,
+  }) {
+    return EdgeInsets.fromLTRB(
+      horizontal,
+      top,
+      horizontal,
+      bottomBarHeight + bottom,
+    );
+  }
+
+  static EdgeInsets bottomSheetPadding({
+    double left = 0,
+    double top = 0,
+    double right = 0,
+    double bottom = 12,
+  }) {
+    return EdgeInsets.fromLTRB(
+      left,
+      top,
+      right,
+      bottomBarHeight + bottom,
+    );
+  }
 
   static Divider get divider => Divider(
         height: 1,
