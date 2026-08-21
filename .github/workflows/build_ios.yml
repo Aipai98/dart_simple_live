@@ -33,11 +33,12 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
+          cache: false
 
       - name: Restore packages
         run: |
           cd simple_live_app
+          rm -f pubspec.lock
           flutter pub get
 
       - name: Analyze Dart code
