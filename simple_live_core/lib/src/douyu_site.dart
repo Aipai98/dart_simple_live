@@ -370,6 +370,14 @@ class DouyuSite implements LiveSite {
     return roomInfo["show_status"] == 1 && roomInfo["videoLoop"] != 1;
   }
 
+  @override
+  Future<LiveStatusState> getLiveStatusState({required String roomId}) async {
+    var roomInfo = await _getRoomInfo(roomId);
+    var isLive = roomInfo["show_status"] == 1 && roomInfo["videoLoop"] != 1;
+    if (isLive) return LiveStatusState.live;
+    return LiveStatusState.offline;
+  }
+
   int parseHotNum(String hn) {
     try {
       var num = double.parse(hn.replaceAll("万", ""));

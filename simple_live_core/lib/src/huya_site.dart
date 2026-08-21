@@ -527,6 +527,15 @@ class HuyaSite implements LiveSite {
     return roomInfo["roomInfo"]["eLiveStatus"] == 2;
   }
 
+  @override
+  Future<LiveStatusState> getLiveStatusState({required String roomId}) async {
+    var roomInfo = await _getRoomInfo(roomId);
+    var status = roomInfo["roomInfo"]["eLiveStatus"] as int;
+    if (status == 2) return LiveStatusState.live;
+    if (status == 1) return LiveStatusState.preparing;
+    return LiveStatusState.offline;
+  }
+
   /// 匿名登录获取uid
   Future<String> getAnonymousUid() async {
     var result = await CoreHttpClient.instance.postJson(
