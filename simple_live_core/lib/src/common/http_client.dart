@@ -4,16 +4,16 @@ import 'package:dio/dio.dart';
 
 import 'custom_interceptor.dart';
 
-class HttpClient {
-  static HttpClient? _httpUtil;
+class CoreHttpClient {
+  static CoreHttpClient? _httpUtil;
 
-  static HttpClient get instance {
-    _httpUtil ??= HttpClient();
+  static CoreHttpClient get instance {
+    _httpUtil ??= CoreHttpClient();
     return _httpUtil!;
   }
 
   late Dio dio;
-  HttpClient() {
+  CoreHttpClient() {
     dio = Dio(
       BaseOptions(
         connectTimeout: Duration(seconds: 20),

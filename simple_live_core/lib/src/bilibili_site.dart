@@ -79,7 +79,7 @@ class BiliBiliSite implements LiveSite {
   @override
   Future<List<LiveCategory>> getCategores() async {
     List<LiveCategory> categories = [];
-    var result = await HttpClient.instance.getJson(
+    var result = await CoreHttpClient.instance.getJson(
       "https://api.live.bilibili.com/room/v1/Area/getList",
       queryParameters: {"need_entrance": 1, "parent_id": 0},
       header: await getHeader(),
@@ -110,7 +110,7 @@ class BiliBiliSite implements LiveSite {
     LiveSubCategory category, {
     int page = 1,
   }) async {
-    var result = await HttpClient.instance.getJson(
+    var result = await CoreHttpClient.instance.getJson(
       "https://api.live.bilibili.com/room/v1/Area/getRoomList",
       queryParameters: {
         "platform": "web",
@@ -262,7 +262,7 @@ class BiliBiliSite implements LiveSite {
     for (var attempt = 0; attempt <= retryDelays.length; attempt++) {
       try {
         return await _throttlePlayInfoRequest(
-          () async => HttpClient.instance.getJson(
+          () async => CoreHttpClient.instance.getJson(
             "https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo",
             queryParameters: queryParameters,
             header: await getHeader(),
@@ -312,7 +312,7 @@ class BiliBiliSite implements LiveSite {
 
     var queryParams = await getWbiSign(url);
 
-    var result = await HttpClient.instance.getJson(
+    var result = await CoreHttpClient.instance.getJson(
       baseUrl,
       queryParameters: queryParams,
       header: await getHeader(),
@@ -347,7 +347,7 @@ class BiliBiliSite implements LiveSite {
     Map? danmuData;
     List<String> serverHosts = [];
     try {
-      var roomDanmakuResult = await HttpClient.instance.getJson(
+      var roomDanmakuResult = await CoreHttpClient.instance.getJson(
         danmuInfoBaseUrl,
         queryParameters: queryParams,
         header: await getHeader(),
@@ -411,7 +411,7 @@ class BiliBiliSite implements LiveSite {
     var url =
         "https://api.live.bilibili.com/xlive/web-room/v1/index/getInfoByRoom?room_id=$roomId";
     var queryParams = await getWbiSign(url);
-    var result = await HttpClient.instance.getJson(
+    var result = await CoreHttpClient.instance.getJson(
       "https://api.live.bilibili.com/xlive/web-room/v1/index/getInfoByRoom",
       queryParameters: queryParams,
       header: await getHeader(),
@@ -425,7 +425,7 @@ class BiliBiliSite implements LiveSite {
     int page = 1,
     CoreCancellation? cancellation,
   }) async {
-    var result = await HttpClient.instance.getJson(
+    var result = await CoreHttpClient.instance.getJson(
       "https://api.bilibili.com/x/web-interface/search/type?context=&search_type=live&cover_type=user_cover",
       queryParameters: {
         "order": "",
@@ -479,7 +479,7 @@ class BiliBiliSite implements LiveSite {
     int page = 1,
     CoreCancellation? cancellation,
   }) async {
-    var result = await HttpClient.instance.getJson(
+    var result = await CoreHttpClient.instance.getJson(
       "https://api.bilibili.com/x/web-interface/search/type?context=&search_type=live_user&cover_type=user_cover",
       queryParameters: {
         "order": "",
@@ -537,7 +537,7 @@ class BiliBiliSite implements LiveSite {
 
   @override
   Future<bool> getLiveStatus({required String roomId}) async {
-    var result = await HttpClient.instance.getJson(
+    var result = await CoreHttpClient.instance.getJson(
       "https://api.live.bilibili.com/room/v1/Room/get_info",
       queryParameters: {"room_id": roomId},
       header: await getHeader(),
@@ -550,7 +550,7 @@ class BiliBiliSite implements LiveSite {
     required String roomId,
     LiveRoomDetail? detail,
   }) async {
-    var result = await HttpClient.instance.getJson(
+    var result = await CoreHttpClient.instance.getJson(
       "https://api.live.bilibili.com/av/v1/SuperChat/getMessageList",
       queryParameters: {"room_id": roomId},
       header: await getHeader(),
@@ -594,7 +594,7 @@ class BiliBiliSite implements LiveSite {
       return [];
     }
 
-    var result = await HttpClient.instance.getJson(
+    var result = await CoreHttpClient.instance.getJson(
       "https://api.live.bilibili.com/xlive/general-interface/v1/rank/queryContributionRank",
       queryParameters: {
         "ruid": uid,
@@ -653,7 +653,7 @@ class BiliBiliSite implements LiveSite {
         };
       }
 
-      var result = await HttpClient.instance.getJson(
+      var result = await CoreHttpClient.instance.getJson(
         "https://api.bilibili.com/x/frontend/finger/spi",
         queryParameters: {},
         header: {
@@ -685,7 +685,7 @@ class BiliBiliSite implements LiveSite {
       return (kImgKey, kSubKey);
     }
     // 获取最新的 img_key 和 sub_key
-    var resp = await HttpClient.instance.getJson(
+    var resp = await CoreHttpClient.instance.getJson(
       'https://api.bilibili.com/x/web-interface/nav',
       header: await getHeader(),
     );
@@ -744,7 +744,7 @@ class BiliBiliSite implements LiveSite {
     }
 
     // 获取 access_id
-    var resp = await HttpClient.instance.getText(
+    var resp = await CoreHttpClient.instance.getText(
       "https://live.bilibili.com/lol",
       queryParameters: {},
       header: await getHeader(),

@@ -55,7 +55,7 @@ class HuyaSite implements LiveSite {
   }
 
   Future<List<LiveSubCategory>> getSubCategores(String id) async {
-    var result = await HttpClient.instance.getJson(
+    var result = await CoreHttpClient.instance.getJson(
       "https://live.cdn.huya.com/liveconfig/game/bussLive",
       queryParameters: {
         "bussType": id,
@@ -91,7 +91,7 @@ class HuyaSite implements LiveSite {
   @override
   Future<LiveCategoryResult> getCategoryRooms(LiveSubCategory category,
       {int page = 1}) async {
-    var resultText = await HttpClient.instance.getJson(
+    var resultText = await CoreHttpClient.instance.getJson(
       "https://www.huya.com/cache.php",
       queryParameters: {
         "m": "LiveList",
@@ -194,7 +194,7 @@ class HuyaSite implements LiveSite {
       return playUserAgent!;
     }
     try {
-      var result = await HttpClient.instance.getJson(
+      var result = await CoreHttpClient.instance.getJson(
         "https://github.iill.moe/xiaoyaocz/dart_simple_live/master/assets/play_config.json",
         queryParameters: {
           "ts": DateTime.now().millisecondsSinceEpoch,
@@ -310,7 +310,7 @@ class HuyaSite implements LiveSite {
 
   @override
   Future<LiveCategoryResult> getRecommendRooms({int page = 1}) async {
-    var resultText = await HttpClient.instance.getJson(
+    var resultText = await CoreHttpClient.instance.getJson(
       "https://www.huya.com/cache.php",
       queryParameters: {
         "m": "LiveList",
@@ -415,7 +415,7 @@ class HuyaSite implements LiveSite {
   }
 
   Future<Map> _getRoomInfo(String roomId) async {
-    var resultText = await HttpClient.instance.getText(
+    var resultText = await CoreHttpClient.instance.getText(
       "https://m.huya.com/$roomId",
       queryParameters: {},
       header: {
@@ -449,7 +449,7 @@ class HuyaSite implements LiveSite {
   @override
   Future<LiveSearchRoomResult> searchRooms(String keyword,
       {int page = 1}) async {
-    var resultText = await HttpClient.instance.getJson(
+    var resultText = await CoreHttpClient.instance.getJson(
       "https://search.cdn.huya.com/",
       queryParameters: {
         "m": "Search",
@@ -492,7 +492,7 @@ class HuyaSite implements LiveSite {
   @override
   Future<LiveSearchAnchorResult> searchAnchors(String keyword,
       {int page = 1}) async {
-    var resultText = await HttpClient.instance.getJson(
+    var resultText = await CoreHttpClient.instance.getJson(
       "https://search.cdn.huya.com/",
       queryParameters: {
         "m": "Search",
@@ -529,7 +529,7 @@ class HuyaSite implements LiveSite {
 
   /// 匿名登录获取uid
   Future<String> getAnonymousUid() async {
-    var result = await HttpClient.instance.postJson(
+    var result = await CoreHttpClient.instance.postJson(
       "https://udblgn.huya.com/web/anonymousLogin",
       data: {
         "appId": 5002,

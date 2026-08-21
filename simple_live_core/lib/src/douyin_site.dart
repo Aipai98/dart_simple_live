@@ -214,7 +214,7 @@ class DouyinSite implements LiveSite {
   @override
   Future<List<LiveCategory>> getCategores() async {
     List<LiveCategory> categories = [];
-    var result = await HttpClient.instance.getText(
+    var result = await CoreHttpClient.instance.getText(
       "https://live.douyin.com/",
       queryParameters: {},
       header: await getRequestHeaders(),
@@ -429,7 +429,7 @@ class DouyinSite implements LiveSite {
     );
     var requestUrl = DouyinSign.getAbogusUrl(uri.toString(), kDefaultUserAgent);
 
-    var result = await HttpClient.instance.getJson(
+    var result = await CoreHttpClient.instance.getJson(
       requestUrl,
       header: await getRequestHeaders(),
     );
@@ -484,7 +484,7 @@ class DouyinSite implements LiveSite {
     );
     var requestUrl = DouyinSign.getAbogusUrl(uri.toString(), kDefaultUserAgent);
 
-    var result = await HttpClient.instance.getJson(
+    var result = await CoreHttpClient.instance.getJson(
       requestUrl,
       header: await getRequestHeaders(),
     );
@@ -744,7 +744,7 @@ class DouyinSite implements LiveSite {
     requestHeaders["Referer"] = "https://live.douyin.com/$webRid";
     dynamic headResp;
     try {
-      headResp = await HttpClient.instance.head(
+      headResp = await CoreHttpClient.instance.head(
         "https://live.douyin.com/$webRid",
         header: requestHeaders,
         cancellation: cancellation,
@@ -791,7 +791,7 @@ class DouyinSite implements LiveSite {
     var dyCookie = await _getWebCookie(webRid, cancellation: cancellation);
     _throwIfCancelled(cancellation);
     final requestStopwatch = Stopwatch()..start();
-    var result = await HttpClient.instance.getText(
+    var result = await CoreHttpClient.instance.getText(
       "https://live.douyin.com/$webRid",
       queryParameters: {},
       header: {
@@ -877,7 +877,7 @@ class DouyinSite implements LiveSite {
     _logElapsed("_getRoomDataByApi($webRid) a_bogus", signStopwatch);
 
     final requestStopwatch = Stopwatch()..start();
-    var result = await HttpClient.instance.getJson(
+    var result = await CoreHttpClient.instance.getJson(
       requestUrl,
       header: requestHeader,
     );
@@ -902,7 +902,7 @@ class DouyinSite implements LiveSite {
 
   /// 通过roomId获取直播间信息
   Future<Map> _getRoomDataByRoomId(String roomId) async {
-    var result = await HttpClient.instance.getJson(
+    var result = await CoreHttpClient.instance.getJson(
       'https://webcast.amemv.com/webcast/room/reflow/info/',
       queryParameters: {
         "type_id": 0,
@@ -1089,7 +1089,7 @@ class DouyinSite implements LiveSite {
     if (cookie.trim().isEmpty) {
       dynamic headResp;
       try {
-        headResp = await HttpClient.instance.head(
+        headResp = await CoreHttpClient.instance.head(
           'https://live.douyin.com',
           header: requestHeaders,
           cancellation: cancellation,
@@ -1131,7 +1131,7 @@ class DouyinSite implements LiveSite {
     }
     _throwIfCancelled(cancellation);
 
-    final responseText = await HttpClient.instance.getText(
+    final responseText = await CoreHttpClient.instance.getText(
       requestUrl,
       queryParameters: {},
       header: {
@@ -1321,7 +1321,7 @@ class DouyinSite implements LiveSite {
     _throwIfCancelled(cancellation);
     dynamic headResponse;
     try {
-      headResponse = await HttpClient.instance.head(
+      headResponse = await CoreHttpClient.instance.head(
         'https://live.douyin.com',
         header: requestHeaders,
         cancellation: cancellation,
@@ -1357,7 +1357,7 @@ class DouyinSite implements LiveSite {
       ..remove('update_version_code')
       ..['webid'] = '7382872326016435738';
     final upstreamUri = uri.replace(queryParameters: query);
-    final responseText = await HttpClient.instance.getText(
+    final responseText = await CoreHttpClient.instance.getText(
       upstreamUri.toString(),
       queryParameters: {},
       header: {
@@ -1699,7 +1699,7 @@ class DouyinSite implements LiveSite {
       uri.toString(),
       kDefaultUserAgent,
     );
-    final result = await HttpClient.instance.getJson(
+    final result = await CoreHttpClient.instance.getJson(
       requestUrl,
       header: requestHeader,
     );

@@ -31,7 +31,7 @@ class DouyuSite implements LiveSite {
   @override
   Future<List<LiveCategory>> getCategores() async {
     List<LiveCategory> categories = [];
-    var result = await HttpClient.instance.getJson(
+    var result = await CoreHttpClient.instance.getJson(
       "https://m.douyu.com/api/cate/list",
     );
     var subCateList = result["data"]["cate2Info"] as List;
@@ -68,7 +68,7 @@ class DouyuSite implements LiveSite {
     LiveSubCategory category, {
     int page = 1,
   }) async {
-    var result = await HttpClient.instance.getJson(
+    var result = await CoreHttpClient.instance.getJson(
       "https://www.douyu.com/gapi/rkc/directory/mixList/2_${category.id}/$page",
       queryParameters: {},
     );
@@ -98,7 +98,7 @@ class DouyuSite implements LiveSite {
     var data = detail.data.toString();
     data += "&cdn=&rate=-1&ver=Douyu_223061205&iar=1&ive=1&hevc=0&fa=0";
     List<LivePlayQuality> qualities = [];
-    var result = await HttpClient.instance.postJson(
+    var result = await CoreHttpClient.instance.postJson(
       "https://www.douyu.com/lapi/live/getH5Play/${detail.roomId}",
       data: data,
       formUrlEncoded: true,
@@ -155,7 +155,7 @@ class DouyuSite implements LiveSite {
     String cdn,
   ) async {
     args += "&cdn=$cdn&rate=$rate";
-    var result = await HttpClient.instance.postJson(
+    var result = await CoreHttpClient.instance.postJson(
       "https://www.douyu.com/lapi/live/getH5Play/$roomId",
       data: args,
       header: {
@@ -171,7 +171,7 @@ class DouyuSite implements LiveSite {
 
   @override
   Future<LiveCategoryResult> getRecommendRooms({int page = 1}) async {
-    var result = await HttpClient.instance.getJson(
+    var result = await CoreHttpClient.instance.getJson(
       "https://www.douyu.com/japi/weblist/apinc/allpage/6/$page",
       queryParameters: {},
     );
@@ -198,7 +198,7 @@ class DouyuSite implements LiveSite {
   Future<LiveRoomDetail> getRoomDetail({required String roomId}) async {
     Map roomInfo = await _getRoomInfo(roomId);
 
-    Map h5RoomInfo = await HttpClient.instance.getJson(
+    Map h5RoomInfo = await CoreHttpClient.instance.getJson(
       "https://www.douyu.com/swf_api/h5room/$roomId",
       queryParameters: {},
       header: {
@@ -209,7 +209,7 @@ class DouyuSite implements LiveSite {
     );
     String? showTime = h5RoomInfo["data"]?["show_time"]?.toString();
 
-    var jsEncResult = await HttpClient.instance.getText(
+    var jsEncResult = await CoreHttpClient.instance.getText(
       "https://www.douyu.com/swf_api/homeH5Enc?rids=$roomId",
       queryParameters: {},
       header: {
@@ -262,7 +262,7 @@ class DouyuSite implements LiveSite {
     int page = 1,
   }) async {
     var did = generateRandomString(32);
-    var result = await HttpClient.instance.getJson(
+    var result = await CoreHttpClient.instance.getJson(
       "https://www.douyu.com/japi/search/api/searchShow",
       queryParameters: {"kw": keyword, "page": page, "pageSize": 20},
       header: {
@@ -291,7 +291,7 @@ class DouyuSite implements LiveSite {
   }
 
   Future<Map> _getRoomInfo(String roomId) async {
-    var result = await HttpClient.instance.getJson(
+    var result = await CoreHttpClient.instance.getJson(
       "https://www.douyu.com/betard/$roomId",
       queryParameters: {},
       header: {
@@ -326,7 +326,7 @@ class DouyuSite implements LiveSite {
     int page = 1,
   }) async {
     var did = generateRandomString(32);
-    var result = await HttpClient.instance.getJson(
+    var result = await CoreHttpClient.instance.getJson(
       "https://www.douyu.com/japi/search/api/searchUser",
       queryParameters: {
         "kw": keyword,
