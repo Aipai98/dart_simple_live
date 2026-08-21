@@ -40,6 +40,17 @@ jobs:
           cd simple_live_app
           flutter pub get
 
+      - name: Analyze Dart code
+        run: |
+          cd simple_live_app
+          flutter analyze --no-fatal-infos
+
+      - name: Clean stale build artifacts
+        run: |
+          cd simple_live_app
+          rm -rf build .dart_tool
+          find . -name "*.lock" -path "*/.dart_tool/*" -delete
+
       - name: Build iOS
         run: |
           cd simple_live_app
